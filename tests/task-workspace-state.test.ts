@@ -5,6 +5,7 @@ import {
   clearQuickWorkspaceResults,
   createEmptyQuickWorkspaceState,
   createGenerationSnapshot,
+  getFineTuneProgressPercent,
   getQuickProgressPercent,
   reconcileSeedPreview,
 } from "../src/utils/taskWorkspaceState";
@@ -15,10 +16,13 @@ import {
   getQuickModeContract,
 } from "../src/utils/workspaceModeContract";
 import {
+  DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
+  applyDefaultInstructionSystemPrompt,
   createEmptyInstructionSample,
   createEmptyMultiTurnSample,
   getMissingInstructionFields,
   getMissingMultiTurnFields,
+  normalizeInstructionSampleForEdit,
   toLlamaFactoryAlpacaRecord,
   toMultiTurnConversations,
 } from "../src/utils/fineTuneDataContract";
@@ -103,10 +107,25 @@ test("createGenerationSnapshot deep clones seeds so later edits do not leak into
 
 test("createEmptyQuickWorkspaceState and clearQuickWorkspaceResults keep clear scoped to the active task", () => {
   const initial = createEmptyQuickWorkspaceState();
+  assert.equal(initial.quickConcurrency, 4);
   const populated = {
     ...initial,
     quickImportStatus: "ready" as const,
     quickGeneratedItems: [{ id: "item-1", type: "single" as const, q: "Q", a: "A" }],
+    quickCachedBatches: [
+      {
+        id: "batch-1",
+        label: "批次 1",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        items: [{ id: "item-1", type: "single" as const, q: "Q", a: "A" }],
+        stats: {
+          seeds_count: 1,
+          total_generated: 1,
+          total_retained: 1,
+          pass_rate: 1,
+        },
+      },
+    ],
     quickRunStats: {
       seeds_count: 1,
       total_generated: 1,
@@ -122,6 +141,36 @@ test("createEmptyQuickWorkspaceState and clearQuickWorkspaceResults keep clear s
   assert.equal(cleared.quickRunStats, null);
   assert.equal(cleared.quickRunProgress, null);
   assert.deepEqual(cleared.quickGeneratedItems, []);
+  assert.deepEqual(cleared.quickCachedBatches, []);
+});
+
+test("fine-tune batch progress stays below complete while corpus generation is still running", () => {
+  assert.equal(
+    getFineTuneProgressPercent({
+      stage: "preparing",
+      completed: 3,
+      total: 6,
+    }),
+    50,
+  );
+
+  assert.equal(
+    getFineTuneProgressPercent({
+      stage: "generating",
+      completed: 3,
+      total: 3,
+    }),
+    92,
+  );
+
+  assert.equal(
+    getFineTuneProgressPercent({
+      stage: "idle",
+      completed: 0,
+      total: 0,
+    }),
+    0,
+  );
 });
 
 test("quick progress starts low and advances by completed seeds instead of rendering full immediately", () => {
@@ -223,6 +272,51 @@ test("fine-tune instruction contract checks instruction input and output fields"
     }),
     [],
   );
+});
+
+test("fine-tune instruction system prompt defaults only when system is empty", () => {
+  assert.equal(
+    DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
+    "你是AI助手，负责帮助用户解决例如查询、操作、交流等各类问题",
+  );
+  assert.deepEqual(
+    applyDefaultInstructionSystemPrompt({
+      system: "",
+      instruction: "帮我查一下胎压",
+      input: "",
+      output: "",
+    }),
+    {
+      system: DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
+      instruction: "帮我查一下胎压",
+      input: "",
+      output: "",
+    },
+  );
+  assert.equal(
+    applyDefaultInstructionSystemPrompt({
+      system: "你是车机助手",
+      instruction: "帮我查一下胎压",
+      input: "",
+      output: "",
+    }).system,
+    "你是车机助手",
+  );
+});
+
+test("fine-tune instruction edit validation treats a cleared instruction as missing", () => {
+  const sample = normalizeInstructionSampleForEdit(
+    {
+      system: "你是AI助手",
+      instruction: "",
+      input: "",
+      output: "好的",
+    },
+    "帮我查一下胎压",
+  );
+
+  assert.equal(sample.instruction, "");
+  assert.deepEqual(getMissingInstructionFields(sample), ["instruction"]);
 });
 
 test("fine-tune instruction normalization keeps current query in instruction and leaves input for supplemental material", () => {

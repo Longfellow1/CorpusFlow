@@ -49,15 +49,19 @@ import {
   clearQuickWorkspaceResults,
   createEmptyQuickWorkspaceState,
   createGenerationSnapshot,
+  getFineTuneProgressPercent,
   reconcileSeedPreview,
   splitSeedInput,
 } from "./utils/taskWorkspaceState";
 import {
+  DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
+  applyDefaultInstructionSystemPrompt,
   createEmptyInstructionSample,
   createEmptyMultiTurnSample,
   getMissingInstructionFields,
   getMissingMultiTurnFields,
   normalizeInstructionSample,
+  normalizeInstructionSampleForEdit,
   normalizeMultiTurnSample,
   type InstructionSample,
   type MultiTurnSample,
@@ -230,7 +234,7 @@ function getTaskBadge(task: Task) {
     return { label: "批量任务", className: "bg-sky-500/10 text-sky-400" };
   }
   if (view === "quick") {
-    return { label: "快速任务", className: "bg-emerald-500/10 text-emerald-400" };
+    return { label: "批量任务", className: "bg-emerald-500/10 text-emerald-400" };
   }
   return { label: "精调生成", className: "bg-indigo-500/10 text-indigo-400" };
 }
@@ -375,6 +379,7 @@ export default function App() {
   const quickAbortControllerRef = useRef<AbortController | null>(null);
   const quickJobIdRef = useRef<string | null>(null);
   const quickControlIntentRef = useRef<"pause" | "stop" | null>(null);
+  const quickGeneratedItemsRef = useRef<GeneratedItem[]>([]);
   const currentQuickWorkspaceKey = activeTask || "__quick-adhoc__";
   const currentQuickWorkspace = quickWorkspaceByTask[currentQuickWorkspaceKey] ?? createEmptyQuickWorkspaceState();
   const {
@@ -393,6 +398,7 @@ export default function App() {
     quickRunStatus,
     quickRunStats,
     quickRunProgress,
+    quickCachedBatches,
     quickGeneratedItems,
     quickControlExpanded,
     quickInstructionTemplate,
@@ -420,6 +426,13 @@ export default function App() {
     fineTuneMultiTurnEnabled,
   );
   const setFineTuneOutputKind = useCallback((kind: FineTuneOutputKind) => {
+    if (kind === "instruct") {
+      setMultiTurnContext((prev) => prev.trim() ? prev : DEFAULT_INSTRUCTION_SYSTEM_PROMPT);
+      setSeeds((prev) => prev.map((seed) => ({
+        ...seed,
+        instruct: applyDefaultInstructionSystemPrompt(normalizeInstructionSampleForEdit(seed.instruct, seed.text)),
+      })));
+    }
     setMode(resolveFineTuneMode(kind, fineTuneMultiTurnEnabled));
   }, [fineTuneMultiTurnEnabled]);
   const setFineTuneMultiTurn = useCallback((enabled: boolean) => {
@@ -549,6 +562,10 @@ export default function App() {
   }, [activeTask, addToast, currentQuickWorkspace, generatedData, isLoggedIn, seeds, tasks, view]);
 
   useEffect(() => {
+    quickGeneratedItemsRef.current = quickGeneratedItems as GeneratedItem[];
+  }, [quickGeneratedItems]);
+
+  useEffect(() => {
     return () => {
       if (saveFeedbackTimerRef.current !== null) {
         window.clearTimeout(saveFeedbackTimerRef.current);
@@ -567,7 +584,7 @@ export default function App() {
   const createWorkspaceTask = useCallback(async (workMode: "quick" | "advanced") => {
     const nextMode = workMode === "quick" ? "quick" : "single";
     const taskName = workMode === "quick"
-      ? `快速任务-${new Date().toLocaleTimeString()}`
+      ? `批量任务-${new Date().toLocaleTimeString()}`
       : `精调任务-${new Date().toLocaleTimeString()}`;
     const newTask = await apiService.createTask({
       name: taskName,
@@ -631,7 +648,7 @@ export default function App() {
         return;
       } catch (error) {
         console.error("Create quick task failed", error);
-        setApiError("创建快速任务失败");
+        setApiError("创建批量任务失败");
         return;
       }
     }
@@ -711,9 +728,7 @@ export default function App() {
         ? "正在生成中"
         : "";
   const canRunFineTune = !fineTuneBlockReason;
-  const fineTuneProgressPercent = fineTuneProgress.total > 0
-    ? Math.round((fineTuneProgress.completed / fineTuneProgress.total) * 100)
-    : 0;
+  const fineTuneProgressPercent = getFineTuneProgressPercent(fineTuneProgress);
 
   useEffect(() => {
     let cancelled = false;
@@ -1028,13 +1043,17 @@ export default function App() {
     });
     try {
       const parsed = await parseQuickTaskFile(file);
+      const parsedKind = parsed.kind === "multi" ? "qa" : parsed.kind;
       updateQuickWorkspace({
         quickFile: {
           name: file.name,
           size: `${Math.max(1, Math.round(file.size / 1024))}KB`,
         },
-        quickTaskKind: parsed.kind === "multi" ? "qa" : parsed.kind,
+        quickTaskKind: parsedKind,
         quickMultiTurnEnabled: parsed.kind === "multi",
+        quickInstructionTemplate: parsedKind === "instruct" && !quickInstructionTemplate.trim()
+          ? DEFAULT_INSTRUCTION_SYSTEM_PROMPT
+          : quickInstructionTemplate,
         quickRows: parsed.rows,
         quickHeaders: parsed.headers,
         quickColumns: parsed.columns,
@@ -1084,14 +1103,14 @@ export default function App() {
         return {
           ...base,
           type: "instruct" as const,
-          q: item.input ?? item.currentQuery ?? "",
+          q: item.instruction ?? item.currentQuery ?? "",
           a: item.response ?? item.output ?? "",
           system: item.system ?? "",
           instruction: item.instruction ?? item.currentQuery ?? "",
           input: item.input ?? "",
           output: item.output ?? item.response ?? "",
           history: item.history ?? [],
-          currentQuery: item.currentQuery ?? item.input ?? "",
+          currentQuery: item.currentQuery ?? item.instruction ?? "",
           response: item.response ?? item.output ?? "",
           conversations: item.conversations ?? [],
         };
@@ -1208,6 +1227,7 @@ export default function App() {
         filter_strength: quickFilterStrength,
         concurrency: quickConcurrency,
         diversity: quickDiversity,
+        generation_intent: quickGenerationIntent.trim() || undefined,
         system_prompt: quickOutputKind === "instruct" && quickInstructionTemplate.trim()
           ? quickInstructionTemplate.trim()
           : undefined,
@@ -1244,9 +1264,20 @@ export default function App() {
       const controlIntent = quickControlIntentRef.current;
       const completedAfterRun = new Set(finalItems.map((item) => item.seedIndex).filter((index): index is number => typeof index === "number"));
       const hasPendingSeeds = completedAfterRun.size < seeds.length;
-      updateQuickWorkspace({
+      const nextBatch = {
+        id: `batch-${Date.now()}`,
+        label: `批次 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+        createdAt: new Date().toISOString(),
+        items: finalItems,
+        stats: nextStats,
+      };
+      updateQuickWorkspace((prev) => ({
         quickGeneratedItems: finalItems,
         quickRunStats: nextStats,
+        quickCachedBatches: [
+          nextBatch,
+          ...(prev.quickCachedBatches || []).filter((batch) => batch.items.length > 0),
+        ].slice(0, 3),
         quickRunProgress: {
           total: pendingSeedEntries.length,
           done: pendingSeedEntries.length,
@@ -1258,7 +1289,7 @@ export default function App() {
           : finalItems.length > 0 || result.status !== "cancelled"
             ? "done"
             : "idle",
-      });
+      }));
     } catch (error) {
       if (quickGenerationRunRef.current !== runId || (error instanceof Error && error.name === "AbortError")) {
         return;
@@ -1266,7 +1297,7 @@ export default function App() {
       console.error("Quick generation failed", error);
       updateQuickWorkspace({
         quickRunStatus: "idle",
-        quickImportError: error instanceof Error ? error.message : "快速任务生成失败",
+        quickImportError: error instanceof Error ? error.message : "批量任务生成失败",
       });
     } finally {
       if (progressTimer !== null) {
@@ -1342,7 +1373,7 @@ export default function App() {
       return getMissingMultiTurnFields(normalizeMultiTurnSample(seed.qa, seed.text)).length === 0;
     }
     if (requestMode === "instruct") {
-      return getMissingInstructionFields(normalizeInstructionSample(seed.instruct, seed.text)).length === 0;
+      return getMissingInstructionFields(normalizeInstructionSampleForEdit(seed.instruct, seed.text)).length === 0;
     }
     if (requestMode === "single") {
       return (seed.paraphrases?.length || 0) > 0;
@@ -1451,7 +1482,7 @@ export default function App() {
         }), seed.text);
         instruct = {
           ...generatedInstruct,
-          system: generatedInstruct.system || request.multiTurnContext.trim(),
+          system: generatedInstruct.system || request.multiTurnContext.trim() || DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
         };
       }
 
@@ -1519,6 +1550,60 @@ export default function App() {
         ...s,
         paraphraseStatus: 'idle',
       } : s));
+    }
+  };
+
+  const handleRegenerateTrainingSample = async (id: string) => {
+    const seed = seeds.find(s => s.id === id);
+    if (!seed || mode === "single" && !effectiveFineTuneMultiTurn) return;
+    if (mode === "instruct") {
+      const instructionSample = normalizeInstructionSampleForEdit(seed.instruct, seed.text);
+      if (!instructionSample.instruction.trim()) {
+        addToast("请先填写用户问题 Instruction");
+        return;
+      }
+      if (!multiTurnContext.trim() && !instructionSample.system?.trim()) {
+        addToast("请先填写助手角色 System");
+        return;
+      }
+    }
+
+    try {
+      setSeeds(prev => prev.map(s => s.id === id ? { ...s, status: "processing" } : s));
+      let qa = seed.qa;
+      let instruct = seed.instruct;
+
+      if (mode === "multi" || effectiveFineTuneMultiTurn) {
+        qa = normalizeMultiTurnSample(await generateQA(seed.text, {
+          context: multiTurnContext,
+          overallRequirement,
+          styleAdjustment,
+        }), seed.text);
+      }
+
+      if (mode === "instruct") {
+        const generatedInstruct = normalizeInstructionSample(await generateInstruct(seed.text, {
+          context: multiTurnContext,
+          overallRequirement,
+          styleAdjustment,
+        }), seed.text);
+        instruct = {
+          ...generatedInstruct,
+          system: generatedInstruct.system || multiTurnContext.trim() || DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
+        };
+      }
+
+      setSeeds(prev => prev.map(s => s.id === id ? {
+        ...s,
+        qa,
+        instruct,
+        status: "completed",
+        dirty: false,
+      } : s));
+    } catch (error) {
+      console.error("Training sample regeneration failed", error);
+      addToast(error instanceof Error ? error.message : "训练样本预览生成失败");
+      setSeeds(prev => prev.map(s => s.id === id ? { ...s, status: "completed" } : s));
     }
   };
 
@@ -1663,10 +1748,11 @@ export default function App() {
     }
   };
 
-  const handleExport = (format: 'json' | 'csv' | 'jsonl', items: GeneratedItem[] = generatedData) => {
+  const handleExport = (format: 'json' | 'csv' | 'jsonl', items?: GeneratedItem[]) => {
+    const exportItems = items ?? (view === "quick" ? quickGeneratedItemsRef.current : generatedData);
     setIsExporting(true);
     apiService
-      .export(activeTask || "adhoc", { format, items })
+      .export(activeTask || "adhoc", { format, items: exportItems })
       .then((result) => {
         const mimeType = format === "json" ? "application/json" : format === "csv" ? "text/csv" : "text/plain";
         const ext = format === "jsonl" ? "jsonl" : format;
@@ -1690,7 +1776,7 @@ export default function App() {
 
   const handleClearGenerated = () => {
     if (view === "quick") {
-      if (confirm("确定要清空当前快速任务已生成的结果吗？")) {
+      if (confirm("确定要清空当前批量任务已生成的结果吗？")) {
         clearCurrentQuickResults();
       }
       return;
@@ -1818,7 +1904,7 @@ export default function App() {
               )}
               {modeTasks.map((task) => (
                 <option key={task.id} value={task.id}>
-                  {getTaskView(task) === "quick" ? "快速 · " : "精调 · "}{task.name}
+                  {getTaskView(task) === "quick" ? "批量 · " : "精调 · "}{task.name}
                 </option>
               ))}
             </select>
@@ -1885,7 +1971,7 @@ export default function App() {
               <>
                 <ChevronLeft size={12} className="rotate-180" />
                 <span className="text-indigo-400">
-                  {view === 'fine-tune' ? '精调生成' : view === 'quick' ? '快速任务' : '任务列表'}
+                  {view === 'fine-tune' ? '精调生成' : view === 'quick' ? '批量任务' : '任务列表'}
                 </span>
               </>
             )}
@@ -2068,8 +2154,8 @@ export default function App() {
                       <FileText size={40} />
                     </div>
                     <div className="text-center">
-                      <h2 className="text-xl font-bold text-white mb-2">快速任务</h2>
-                      <p className="text-base text-slate-500">弱编辑、重吞吐，面向大批量生成与快速筛选</p>
+                      <h2 className="text-xl font-bold text-white mb-2">批量任务</h2>
+                      <p className="text-base text-slate-500">弱编辑、重吞吐，面向大批量生成与筛选</p>
                     </div>
                   </div>
                 </div>
@@ -2695,13 +2781,22 @@ export default function App() {
                   quickRunStatus={quickRunStatus}
                   quickRunStats={quickRunStats}
                   quickRunProgress={quickRunProgress}
+                  quickCachedBatches={quickCachedBatches || []}
                   quickGeneratedItems={quickGeneratedItems}
                   quickSeedTexts={quickSeedTexts}
                   quickRejectedSeeds={quickRejectedSeeds}
                   quickGroupedResults={quickGroupedResults}
                   onImportFile={handleQuickImport}
                   onResetImport={clearQuickWorkspace}
-                  onTaskKindChange={(kind) => updateQuickWorkspace({ quickTaskKind: kind === "multi" ? "qa" : kind })}
+                  onTaskKindChange={(kind) => updateQuickWorkspace((prev) => {
+                    const nextKind = kind === "multi" ? "qa" : kind;
+                    return {
+                      quickTaskKind: nextKind,
+                      quickInstructionTemplate: nextKind === "instruct" && !prev.quickInstructionTemplate.trim()
+                        ? DEFAULT_INSTRUCTION_SYSTEM_PROMPT
+                        : prev.quickInstructionTemplate,
+                    };
+                  })}
                   onMultiTurnEnabledChange={(enabled) => updateQuickWorkspace({ quickMultiTurnEnabled: enabled })}
                   onTargetPerSeedChange={(value) => updateQuickWorkspace({ quickTargetPerSeed: clampExpansionRatio(value) })}
                   onFilterStrengthChange={(value) => updateQuickWorkspace({ quickFilterStrength: value })}
@@ -2710,8 +2805,17 @@ export default function App() {
                   onGenerate={handleQuickGenerate}
                   onPauseGeneration={handlePauseQuickGeneration}
                   onStopGeneration={handleStopQuickGeneration}
-                  onExport={(format) => handleExport(format, quickGeneratedItems as GeneratedItem[])}
+                  onExport={(format) => handleExport(format)}
                   onClearResults={handleClearGenerated}
+                  onRestoreCachedBatch={(batchId) => updateQuickWorkspace((prev) => {
+                    const batch = (prev.quickCachedBatches || []).find((item) => item.id === batchId);
+                    if (!batch) return {};
+                    return {
+                      quickGeneratedItems: batch.items,
+                      quickRunStats: batch.stats,
+                      quickRunStatus: "done",
+                    };
+                  })}
                   isExporting={isExporting}
                   quickInstructionTemplate={quickInstructionTemplate}
                   onInstructionTemplateChange={(value) => updateQuickWorkspace({ quickInstructionTemplate: value })}
@@ -2831,13 +2935,13 @@ export default function App() {
                     {mode === "instruct" && <span className="text-[11px] text-slate-600">写入 System</span>}
                   </div>
                   <textarea
-                    placeholder={mode === "instruct" ? "例：你是车载语音助手，请根据用户输入给出简洁可执行的回答" : "例：车主正在连续询问同一个用车问题"}
+                    placeholder={mode === "instruct" ? DEFAULT_INSTRUCTION_SYSTEM_PROMPT : "例：车主正在连续询问同一个用车问题"}
                     className="w-full h-20 bg-[#161621] border border-slate-700 rounded-xl p-3 text-sm text-slate-300 outline-none focus:border-indigo-500 transition-all resize-none"
                     value={multiTurnContext}
                     onChange={(e) => setMultiTurnContext(e.target.value)}
                   />
                   <p className="text-[11px] text-slate-600">
-                    {mode === "instruct" ? "用于约束助手身份和回答风格，不会写入 Instruction。" : "只用于生成上一轮配套上下文。"}
+                    {mode === "instruct" ? <>用于约束助手身份和回答风格，不会写入 <span className="font-mono font-bold text-slate-500">Instruction</span>。</> : "只用于生成上一轮配套上下文。"}
                   </p>
                 </div>
               )}
@@ -2896,7 +3000,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
                     <Sparkles size={20} className="text-emerald-400" />
-                    极速生成结果
+                    批量生成结果
                   </h2>
                   <div className="flex items-center gap-4">
                     <span className="text-xs text-slate-500">已生成: {generatedData.length} 条</span>
@@ -2975,7 +3079,16 @@ export default function App() {
                         {seed.status === 'processing' && <Loader2 size={16} className="animate-spin text-indigo-400" />}
                         <button
                           onClick={() => processSeed(seed, buildGenerationRequest([seed]))}
-                          className="p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-md transition-all"
+                          disabled={
+                            seed.status === "processing" ||
+                            (mode === "instruct" && !normalizeInstructionSampleForEdit(seed.instruct, seed.text).instruction.trim())
+                          }
+                          title={
+                            mode === "instruct" && !normalizeInstructionSampleForEdit(seed.instruct, seed.text).instruction.trim()
+                              ? "请先填写用户问题 Instruction"
+                              : "重新生成"
+                          }
+                          className="p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-md transition-all disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           <RotateCcw size={16} />
                         </button>
@@ -3229,15 +3342,15 @@ export default function App() {
                               {mode === 'instruct' ? (
                                   <>
                                     {effectiveFineTuneMultiTurn && (
-                                      <div className="space-y-4 rounded-xl border border-violet-500/20 bg-violet-500/5 p-3">
-                                        <div className="text-[11px] font-bold text-violet-300 uppercase tracking-wider">History (上一轮配套上下文)</div>
+                                      <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/30 p-3">
+                                        <div className="text-[11px] font-bold text-slate-500">上一轮上下文</div>
                                         <div className="space-y-2">
                                           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">上一轮用户问题</span>
                                           <input
                                             type="text"
                                             value={seed.qa?.history?.[0]?.content || ""}
                                             onChange={(e) => handleUpdateSeedField(seed.id, 'qa', 'q1', e.target.value)}
-                                            className="w-full bg-[#161621] border border-slate-700 rounded-lg px-2 py-1 text-xs text-indigo-300 outline-none focus:border-violet-500 transition-all"
+                                            className="w-full bg-[#161621] border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-300 outline-none focus:border-indigo-500 transition-all"
                                           />
                                         </div>
                                         <div className="space-y-2">
@@ -3251,6 +3364,7 @@ export default function App() {
                                         </div>
                                       </div>
                                     )}
+                                    {effectiveFineTuneMultiTurn && <div className="h-px bg-slate-800/70" />}
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-bold text-slate-300">
@@ -3262,14 +3376,14 @@ export default function App() {
                                         value={seed.instruct?.system || ""}
                                         onChange={(e) => handleUpdateSeedField(seed.id, 'instruct', 'system', e.target.value)}
                                         placeholder="模型角色/系统约束，对应 LLaMA-Factory system"
-                                        className="w-full bg-[#161621] border border-slate-700 rounded-lg p-2 text-xs text-indigo-300 outline-none focus:border-indigo-500 transition-all resize-none"
+                                        className="w-full bg-[#161621] border border-slate-700 rounded-lg p-2 text-xs text-slate-300 outline-none focus:border-indigo-500 transition-all resize-none"
                                         rows={2}
                                       />
                                     </div>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-bold text-slate-300">
-                                          用户问题 <span className="ml-2 font-mono text-slate-500">Instruction</span>
+                                          用户问题 <span className="ml-2 font-mono font-bold text-slate-400">Instruction</span>
                                         </span>
                                         <button className="text-[11px] text-indigo-400 flex items-center gap-1"><Edit3 size={10} /> 编辑</button>
                                       </div>
@@ -3283,14 +3397,14 @@ export default function App() {
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between">
                                         <span className="text-xs font-bold text-slate-300">
-                                          补充材料 <span className="ml-2 font-mono text-slate-500">Input</span>
+                                          <span className="font-mono text-slate-400">Input</span> <span className="ml-2 text-slate-300">约束背景</span>
                                         </span>
                                         <button className="text-[11px] text-indigo-400 flex items-center gap-1"><Edit3 size={10} /> 编辑</button>
                                       </div>
                                       <textarea
                                         value={seed.instruct?.input || ""}
                                         onChange={(e) => handleUpdateSeedField(seed.id, 'instruct', 'input', e.target.value)}
-                                        placeholder="仅放补充材料，没有则留空"
+                                        placeholder="可选；放额外背景、约束或参考内容，没有就留空"
                                         className="w-full bg-[#161621] border border-slate-700 rounded-lg p-2 text-xs text-slate-300 outline-none focus:border-indigo-500 transition-all resize-none"
                                         rows={2}
                                       />
@@ -3309,8 +3423,8 @@ export default function App() {
                                         rows={4}
                                       />
                                     </div>
-                                    {getMissingInstructionFields(normalizeInstructionSample(seed.instruct, seed.text)).length > 0 && (
-                                      <p className="text-[11px] text-amber-300">缺失字段：{getMissingInstructionFields(normalizeInstructionSample(seed.instruct, seed.text)).join(", ")}</p>
+                                    {getMissingInstructionFields(normalizeInstructionSampleForEdit(seed.instruct, seed.text)).length > 0 && (
+                                      <p className="text-[11px] text-amber-300">缺失字段：{getMissingInstructionFields(normalizeInstructionSampleForEdit(seed.instruct, seed.text)).join(", ")}</p>
                                     )}
                                     {effectiveFineTuneMultiTurn && getMissingMultiTurnFields(normalizeMultiTurnSample(seed.qa, seed.text)).length > 0 && (
                                       <p className="text-[11px] text-amber-300">多轮字段缺失：{getMissingMultiTurnFields(normalizeMultiTurnSample(seed.qa, seed.text)).join(", ")}</p>
@@ -3377,13 +3491,24 @@ export default function App() {
                               </div>
 
                               <div className="flex gap-2 pt-4 border-t border-slate-800">
-                                <button className="flex-1 border border-slate-700 text-slate-400 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-800">
-                                  <RotateCcw size={14} /> 重新生成
+                                <button
+                                  onClick={() => handleRegenerateTrainingSample(seed.id)}
+                                  disabled={
+                                    seed.status === "processing" ||
+                                    (mode === "instruct" && !normalizeInstructionSampleForEdit(seed.instruct, seed.text).instruction.trim())
+                                  }
+                                  className="flex-1 border border-slate-700 text-slate-400 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {seed.status === "processing" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                                  重新生成
                                 </button>
                                 <button className="flex-1 bg-green-600 text-white py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2">
                                   <Check size={14} /> 确认使用
                                 </button>
                               </div>
+                              {mode === "instruct" && !normalizeInstructionSampleForEdit(seed.instruct, seed.text).instruction.trim() && (
+                                <p className="text-[11px] text-amber-300">请先填写用户问题 <span className="font-mono font-bold">Instruction</span>，再重新生成。</p>
+                              )}
                             </div>
                           )}
                         </Card>
@@ -3479,7 +3604,7 @@ export default function App() {
               </div>
 
               <div className="flex items-center justify-between text-[11px] text-slate-500">
-                <span>模式: {mode === 'quick' ? '快速任务' : mode === 'instruct' ? '指令微调' : mode === 'multi' ? '多轮问答' : '单句模式'}</span>
+                <span>模式: {mode === 'quick' ? '批量任务' : mode === 'instruct' ? '指令微调' : mode === 'multi' ? '多轮问答' : '单句模式'}</span>
                 <span>{isGenerating ? '生成中' : '待生成'}</span>
               </div>
 
@@ -3541,8 +3666,8 @@ export default function App() {
                     {item.type === "instruct" ? (
                       <div className="space-y-1.5">
                         {(item.conversations?.length || item.history?.length || 0) > 0 && (
-                          <div className="space-y-1 rounded-lg border border-violet-500/20 bg-violet-500/5 p-2">
-                            <p className="text-[11px] text-violet-300 font-bold uppercase">History</p>
+                          <div className="space-y-1 rounded-lg border border-slate-800 bg-slate-950/30 p-2">
+                            <p className="text-[11px] text-slate-500 font-bold">上一轮上下文</p>
                             {(item.conversations?.slice(0, 2) || [
                               { from: "human", value: item.history?.[0]?.content || "" },
                               { from: "gpt", value: item.history?.[1]?.content || "" },
@@ -3553,17 +3678,18 @@ export default function App() {
                             ))}
                           </div>
                         )}
+                        {(item.conversations?.length || item.history?.length || 0) > 0 && <div className="h-px bg-slate-800/70" />}
                         <div className="space-y-0.5">
                           <p className="text-xs font-bold text-slate-300">助手角色 <span className="ml-2 font-mono text-slate-500">System</span></p>
                           <textarea
                             value={item.system || ""}
                             onChange={(e) => handleEditGeneratedItem(item.id, "system", e.target.value)}
-                            className="w-full bg-transparent text-[11px] text-indigo-300 leading-relaxed outline-none resize-none focus:bg-slate-800/30 rounded px-1"
+                            className="w-full bg-transparent text-[11px] text-slate-300 leading-relaxed outline-none resize-none focus:bg-slate-800/30 rounded px-1"
                             rows={1}
                           />
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-slate-300">用户问题 <span className="ml-2 font-mono text-slate-500">Instruction</span></p>
+                          <p className="text-xs font-bold text-slate-300">用户问题 <span className="ml-2 font-mono font-bold text-slate-400">Instruction</span></p>
                           <textarea
                             value={item.instruction || ""}
                             onChange={(e) => handleEditGeneratedItem(item.id, "instruction", e.target.value)}
@@ -3572,11 +3698,11 @@ export default function App() {
                           />
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-slate-300">补充材料 <span className="ml-2 font-mono text-slate-500">Input</span></p>
+                          <p className="text-xs font-bold text-slate-300"><span className="font-mono text-slate-400">Input</span> <span className="ml-2">约束背景</span></p>
                           <textarea
                             value={item.input || ""}
                             onChange={(e) => handleEditGeneratedItem(item.id, "input", e.target.value)}
-                            className="w-full bg-transparent text-[11px] text-sky-300 leading-relaxed outline-none resize-none focus:bg-slate-800/30 rounded px-1"
+                            className="w-full bg-transparent text-[11px] text-slate-300 leading-relaxed outline-none resize-none focus:bg-slate-800/30 rounded px-1"
                             rows={1}
                           />
                         </div>

@@ -425,6 +425,56 @@ class GenerationFrameTests(unittest.TestCase):
             app_module.build_analysis = original_analysis
             app_module.generate_expansions = original_expansions
 
+    def test_quick_qa_uses_query_expansion_contract_not_reference_qa(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_json = app_module.call_doubao_json
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+        original_paraphrases = app_module.generate_paraphrases
+
+        try:
+            app_module.build_analysis = lambda *_args, **_kwargs: {
+                "intent": "用户想吃东坡肉",
+                "subject": "用户",
+                "action": "表达想吃",
+                "object": "东坡肉",
+                "modifiers": "",
+            }
+            app_module.generate_expansions = lambda *_args, **_kwargs: {"object": ["红烧肉"], "action": ["想吃"]}
+            app_module.generate_paraphrases = lambda *_args, **_kwargs: [
+                {"text": "我想吃东坡肉", "type": "convergence"}
+            ]
+
+            def fail_raw(**_kwargs):
+                raise AssertionError("quick qa should not use the legacy reference QA prompt")
+
+            def fake_json(**kwargs):
+                self.assertIn("query 扩写生成器", kwargs["system_prompt"])
+                return {
+                    "items": [
+                        {"text": "我想吃红烧肉"},
+                        {"text": "附近有没有东坡肉"},
+                    ]
+                }
+
+            app_module.call_doubao_raw = fail_raw
+            app_module.call_doubao_json = fake_json
+
+            items = quick_generate_for_seed("我想吃东坡肉", "qa", 2, 0.93)
+
+            self.assertEqual(items, [
+                {"q": "我想吃红烧肉", "a": ""},
+                {"q": "附近有没有东坡肉", "a": ""},
+            ])
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.call_doubao_json = original_json
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+            app_module.generate_paraphrases = original_paraphrases
+
     def test_quick_generate_tops_up_exact_duplicates_and_original_query_copies(self):
         import src.app as app_module
 

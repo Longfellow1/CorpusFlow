@@ -1,8 +1,9 @@
-import React, { useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
   ChevronDown,
+  ChevronsDown,
   FileJson,
   FileSpreadsheet,
   FileText,
@@ -23,6 +24,7 @@ import {
   type QuickTaskRow,
 } from "../utils/quickTaskImport";
 import { getQuickProgressPercent } from "../utils/taskWorkspaceState";
+import { DEFAULT_INSTRUCTION_SYSTEM_PROMPT } from "../utils/fineTuneDataContract";
 import type { RejectionCheck } from "../utils/rejectionSafety";
 import type { WorkspaceRunStatus } from "../utils/workspaceModeContract";
 
@@ -79,6 +81,18 @@ type QuickTaskWorkspaceProps = {
     errors: number;
     status: "running" | "done" | "cancelled";
   } | null;
+  quickCachedBatches: Array<{
+    id: string;
+    label: string;
+    createdAt: string;
+    items: QuickGeneratedItem[];
+    stats: {
+      seeds_count: number;
+      total_generated: number;
+      total_retained: number;
+      pass_rate: number;
+    };
+  }>;
   quickGeneratedItems: QuickGeneratedItem[];
   quickSeedTexts: string[];
   quickRejectedSeeds: Record<number, RejectionCheck>;
@@ -99,6 +113,7 @@ type QuickTaskWorkspaceProps = {
   onStopGeneration: () => void;
   onExport: (format: "json" | "csv" | "jsonl") => void;
   onClearResults: () => void;
+  onRestoreCachedBatch: (batchId: string) => void;
   isExporting: boolean;
   quickInstructionTemplate: string;
   onInstructionTemplateChange: (v: string) => void;
@@ -171,6 +186,7 @@ export function QuickTaskWorkspace({
   quickRunStatus,
   quickRunStats,
   quickRunProgress,
+  quickCachedBatches,
   quickGeneratedItems,
   quickSeedTexts,
   quickRejectedSeeds,
@@ -188,6 +204,7 @@ export function QuickTaskWorkspace({
   onStopGeneration,
   onExport,
   onClearResults,
+  onRestoreCachedBatch,
   isExporting,
   quickInstructionTemplate,
   onInstructionTemplateChange,
@@ -197,6 +214,7 @@ export function QuickTaskWorkspace({
   onGenerationIntentChange,
 }: QuickTaskWorkspaceProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [resultsExpanded, setResultsExpanded] = useState(false);
   const openFilePicker = () => fileInputRef.current?.click();
 
   const previewTexts = useMemo(() => quickSeedTexts.slice(0, 8), [quickSeedTexts]);
@@ -273,7 +291,7 @@ export function QuickTaskWorkspace({
             </button>
           </div>
         ) : (
-          <div className="text-lg font-black text-emerald-300">{quickRunStatus === "done" ? "100%" : "..."}</div>
+          <div className="text-lg font-black text-emerald-300">{quickProgressPercent}%</div>
         )}
       </div>
       <div className="relative h-2 overflow-hidden rounded-full bg-slate-800">
@@ -320,6 +338,26 @@ export function QuickTaskWorkspace({
       })
       .filter((group): group is { seedIndex: number; items: QuickGeneratedItem[] } => Boolean(group))
     : quickGroupedResults;
+  const displayedResultGroups = useMemo(() => {
+    if (resultsExpanded || quickGeneratedItems.length <= 10) return visibleResultGroups;
+    let remaining = 10;
+    return visibleResultGroups
+      .map((group) => {
+        if (remaining <= 0) return { ...group, items: [] };
+        const items = group.items.slice(0, remaining);
+        remaining -= items.length;
+        return { ...group, items };
+      })
+      .filter((group) => group.items.length > 0 || quickRejectedSeeds[group.seedIndex]?.blocked);
+  }, [quickGeneratedItems.length, quickRejectedSeeds, resultsExpanded, visibleResultGroups]);
+  const hiddenResultCount = Math.max(
+    0,
+    quickGeneratedItems.length - displayedResultGroups.reduce((sum, group) => sum + group.items.length, 0),
+  );
+
+  useEffect(() => {
+    setResultsExpanded(false);
+  }, [quickRunStatus, quickGeneratedItems.length]);
 
   return (
     <>
@@ -339,7 +377,7 @@ export function QuickTaskWorkspace({
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Upload size={14} className="text-emerald-400" />
-              快速导入
+              批量导入
             </h2>
             <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[11px] text-slate-400">{currentTypeLabel}</span>
           </div>
@@ -465,11 +503,11 @@ export function QuickTaskWorkspace({
                 <div className="text-xs font-bold text-slate-400">字段识别</div>
                 <div className="grid gap-2 text-xs">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-300">用户问题 <span className="ml-2 font-mono text-slate-500">Instruction</span></span>
+                    <span className="text-slate-300">用户问题 <span className="ml-2 font-mono font-bold text-slate-400">Instruction</span></span>
                     {fieldBadge(quickColumns.instruction)}
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-300">补充材料 <span className="ml-2 font-mono text-slate-500">Input</span></span>
+                    <span className="text-slate-300"><span className="font-mono text-slate-400">Input</span> <span className="ml-2">约束背景</span></span>
                     {fieldBadge(quickColumns.input)}
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -583,7 +621,7 @@ export function QuickTaskWorkspace({
                     rows={3}
                     value={quickInstructionTemplate}
                     onChange={(e) => onInstructionTemplateChange(e.target.value)}
-                    placeholder="例：你是车载语音助手，请根据用户输入给出简洁可执行的回答"
+                    placeholder={DEFAULT_INSTRUCTION_SYSTEM_PROMPT}
                     className={cn(
                       "w-full resize-none rounded-xl border px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none transition-colors",
                       "border-slate-700 bg-slate-900/60 focus:border-indigo-500"
@@ -689,6 +727,16 @@ export function QuickTaskWorkspace({
                 </div>
                 {quickControlExpanded && (
                   <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="space-y-2">
+                      <span className="text-[11px] text-slate-500">生成意图</span>
+                      <textarea
+                        rows={2}
+                        value={quickGenerationIntent}
+                        onChange={(event) => onGenerationIntentChange(event.target.value)}
+                        placeholder="例：保持 query 扩写，不要把句子改成知识问答"
+                        className="w-full resize-none rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-300 outline-none transition-colors placeholder-slate-600 focus:border-emerald-500"
+                      />
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-slate-500">并发</span>
                       <span className="text-xs font-bold text-white">{quickConcurrency}</span>
@@ -795,7 +843,7 @@ export function QuickTaskWorkspace({
           <div className="rounded-3xl border border-slate-800 bg-[#1A1A27] p-6 shadow-2xl">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <div className="text-xs font-bold uppercase tracking-widest text-slate-500">快速任务台</div>
+                <div className="text-xs font-bold uppercase tracking-widest text-slate-500">批量任务台</div>
                 <h2 className="mt-1 text-2xl font-black text-white">上传文件，自动识别，直接开跑</h2>
                 <p className="mt-2 text-sm text-slate-500">批量导入 · 自动识别字段 · 生成后直接筛选导出</p>
               </div>
@@ -824,7 +872,23 @@ export function QuickTaskWorkspace({
 
             <div className="mt-5 space-y-4">
               {quickGeneratedItems.length > 0 ? (
-                visibleResultGroups.map((group) => {
+                <>
+                {quickCachedBatches.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/30 p-3">
+                    <span className="text-[11px] font-bold text-slate-500">批次缓存</span>
+                    {quickCachedBatches.map((batch) => (
+                      <button
+                        key={batch.id}
+                        onClick={() => onRestoreCachedBatch(batch.id)}
+                        className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-bold text-slate-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-200"
+                        title={`${batch.stats.total_retained} 条，最多保留近 3 轮`}
+                      >
+                        {batch.label} · {batch.stats.total_retained}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {displayedResultGroups.map((group) => {
                   const sourceRow = quickRows[group.seedIndex];
                   const sourceText = sourceRow
                     ? buildQuickTaskSeedText(sourceRow, quickTaskKind) || `种子 ${group.seedIndex + 1}`
@@ -876,29 +940,30 @@ export function QuickTaskWorkspace({
                             ) : item.type === "instruct" ? (
                               <div className="mt-3 space-y-3">
                                 {((item as any).conversations || []).length > 0 && (
-                                  <div className="space-y-2 rounded-xl border border-violet-500/20 bg-violet-500/5 p-3">
-                                    <div className="text-[11px] font-bold uppercase tracking-wider text-violet-300">History</div>
+                                  <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/30 p-3">
+                                    <div className="text-[11px] font-bold text-slate-500">上一轮上下文</div>
                                     {((item as any).conversations || []).slice(0, 2).map((turn: any, i: number) => (
-                                      <div key={i} className={cn("rounded-lg px-2 py-1 text-xs", turn.from === "human" ? "bg-slate-800 text-white" : "bg-indigo-500/10 text-indigo-200")}>
+                                      <div key={i} className={cn("rounded-lg px-2 py-1 text-xs", turn.from === "human" ? "bg-slate-800/70 text-slate-200" : "bg-slate-800/40 text-slate-400")}>
                                         <span className="mr-2 font-bold text-slate-500">{turn.from === "human" ? "用户" : "助手"}</span>
                                         {turn.value}
                                       </div>
                                     ))}
                                   </div>
                                 )}
+                                {((item as any).conversations || []).length > 0 && <div className="h-px bg-slate-800/70" />}
                                 <div>
                                   <div className="mb-1 text-xs font-bold text-slate-300">助手角色 <span className="ml-2 font-mono text-slate-500">System</span></div>
-                                  <p className="text-sm leading-relaxed text-indigo-300">{(item as any).system || "—"}</p>
+                                  <p className="text-sm leading-relaxed text-slate-400">{(item as any).system || "—"}</p>
+                                </div>
+                                <div className="h-px bg-slate-800" />
+                                <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
+                                  <div className="mb-1 text-xs font-black text-sky-200">用户问题 <span className="ml-2 font-mono text-sky-300/80">Instruction</span></div>
+                                  <p className="text-sm font-bold leading-relaxed text-white">{(item as any).instruction || "—"}</p>
                                 </div>
                                 <div className="h-px bg-slate-800" />
                                 <div>
-                                  <div className="mb-1 text-xs font-bold text-slate-300">用户问题 <span className="ml-2 font-mono text-slate-500">Instruction</span></div>
-                                  <p className="text-sm leading-relaxed text-slate-300">{(item as any).instruction || "—"}</p>
-                                </div>
-                                <div className="h-px bg-slate-800" />
-                                <div>
-                                  <div className="mb-1 text-xs font-bold text-slate-300">补充材料 <span className="ml-2 font-mono text-slate-500">Input</span></div>
-                                  <p className="text-sm leading-relaxed text-white">{(item as any).input || "—"}</p>
+                                  <div className="mb-1 text-xs font-bold text-slate-300"><span className="font-mono text-slate-400">Input</span> <span className="ml-2">约束背景</span></div>
+                                  <p className="text-sm leading-relaxed text-slate-400">{(item as any).input || "—"}</p>
                                 </div>
                                 <div className="h-px bg-slate-800" />
                                 <div>
@@ -925,7 +990,17 @@ export function QuickTaskWorkspace({
                       )}
                     </div>
                   );
-                })
+                })}
+                {hiddenResultCount > 0 && (
+                  <button
+                    onClick={() => setResultsExpanded(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm font-bold text-slate-300 transition-colors hover:border-emerald-500/30 hover:text-white"
+                  >
+                    <ChevronsDown size={16} className="text-emerald-400" />
+                    展开其余 {hiddenResultCount} 条
+                  </button>
+                )}
+                </>
               ) : previewTexts.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {previewTexts.map((text, index) => (

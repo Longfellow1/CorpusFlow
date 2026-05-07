@@ -7,6 +7,8 @@ export type InstructionSample = {
   instruct?: string;
 };
 
+export const DEFAULT_INSTRUCTION_SYSTEM_PROMPT = "你是AI助手，负责帮助用户解决例如查询、操作、交流等各类问题";
+
 export type MultiTurnHistoryItem = {
   role: "user" | "assistant";
   content: string;
@@ -53,6 +55,24 @@ export function normalizeInstructionSample(
     output: sample?.output || sample?.instruct || "",
     query: sample?.query,
     instruct: sample?.instruct,
+  };
+}
+
+export function normalizeInstructionSampleForEdit(
+  sample: Partial<InstructionSample> | null | undefined,
+  fallbackInstruction = "",
+): InstructionSample {
+  const hasInstruction = Boolean(sample) && Object.prototype.hasOwnProperty.call(sample, "instruction");
+  return {
+    ...normalizeInstructionSample(sample, hasInstruction ? "" : fallbackInstruction),
+    instruction: hasInstruction ? sample?.instruction || "" : sample?.instruction || sample?.query || fallbackInstruction,
+  };
+}
+
+export function applyDefaultInstructionSystemPrompt(sample: InstructionSample): InstructionSample {
+  return {
+    ...sample,
+    system: sample.system?.trim() ? sample.system : DEFAULT_INSTRUCTION_SYSTEM_PROMPT,
   };
 }
 

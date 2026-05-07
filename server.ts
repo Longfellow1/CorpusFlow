@@ -505,8 +505,12 @@ async function startServer() {
     };
 
     let content: string;
+    const list = Array.isArray(items) ? items as any[] : [];
+    const allSingle = list.length > 0 && list.every((item: any) => item.type !== "multi" && item.type !== "instruct" && item.type !== "code");
+    const allMulti = list.length > 0 && list.every((item: any) => item.type === "multi");
+    const allInstruct = list.length > 0 && list.every((item: any) => item.type === "instruct" || item.type === "code");
     if (format === "jsonl") {
-      content = (items as any[]).map((item: any) => {
+      content = list.map((item: any) => {
         let record: Record<string, unknown>;
         if (item.type === "multi") {
           record = toMultiRecord(item);
@@ -523,8 +527,32 @@ async function startServer() {
         return JSON.stringify(record);
       }).join("\n");
     } else if (format === "csv") {
-      content = "Type,System,Instruction,Input,Output,History\n" +
-        (items as any[]).map((item: any) => {
+      if (allSingle) {
+        content = "Type,Question,Answer\n" +
+          list.map((item: any) => [item.type || "single", item.q ?? "", item.a ?? ""].map(escapeCsvField).join(",")).join("\n");
+      } else if (allMulti) {
+        content = "Type,History,CurrentQuery,Response\n" +
+          list.map((item: any) => {
+            const record = toMultiRecord(item);
+            return [
+              item.type,
+              record.history.map((turn: any) => `${turn.role}: ${turn.content}`).join("\n"),
+              record.currentQuery,
+              record.response,
+            ].map(escapeCsvField).join(",");
+          }).join("\n");
+      } else if (allInstruct) {
+        content = "Type,System,Instruction,Input,Output,History\n" +
+          list.map((item: any) => {
+            const record = toInstructRecord(item);
+            const history = Array.isArray((record as any).history)
+              ? (record as any).history.map((turn: any) => `${turn[0]} => ${turn[1]}`).join("\n")
+              : "";
+            return [item.type, record.system ?? "", record.instruction, record.input, record.output, history].map(escapeCsvField).join(",");
+          }).join("\n");
+      } else {
+        content = "Type,System,Instruction,Input,Output,History\n" +
+        list.map((item: any) => {
           if (item.type === "multi") {
             const record = toMultiRecord(item);
             return [
@@ -545,9 +573,10 @@ async function startServer() {
           }
           return [item.type, "", item.q ?? "", "", item.a ?? "", ""].map(escapeCsvField).join(",");
         }).join("\n");
+      }
     } else {
       // JSON export - strip metadata fields (id, seedIndex, type)
-      const cleanedItems = (items as any[]).map((item: any) => {
+      const cleanedItems = list.map((item: any) => {
         if (item.type === "multi") {
           return toMultiRecord(item);
         }

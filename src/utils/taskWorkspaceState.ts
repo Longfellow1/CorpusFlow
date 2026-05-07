@@ -18,6 +18,29 @@ export type GenerationSnapshot<TSeed> = {
   seeds: TSeed[];
 };
 
+export type QuickGeneratedItem = {
+  id: string;
+  type: "single" | "multi" | "instruct";
+  q: string;
+  a: string;
+  system?: string;
+  instruction?: string;
+  input?: string;
+  output?: string;
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
+  currentQuery?: string;
+  response?: string;
+  conversations?: Array<{ from: string; value: string }>;
+  seedIndex?: number;
+};
+
+export type QuickRunStats = {
+  seeds_count: number;
+  total_generated: number;
+  total_retained: number;
+  pass_rate: number;
+};
+
 export type QuickWorkspaceState = {
   quickImportStatus: "idle" | "parsing" | "ready" | "error";
   quickImportError: string;
@@ -39,33 +62,21 @@ export type QuickWorkspaceState = {
   quickFilterStrength: "loose" | "medium" | "strict";
   quickConcurrency: number;
   quickRunStatus: WorkspaceRunStatus;
-  quickRunStats: {
-    seeds_count: number;
-    total_generated: number;
-    total_retained: number;
-    pass_rate: number;
-  } | null;
+  quickRunStats: QuickRunStats | null;
   quickRunProgress: {
     total: number;
     done: number;
     errors: number;
     status: "running" | "done" | "cancelled";
   } | null;
-  quickGeneratedItems: Array<{
+  quickCachedBatches: Array<{
     id: string;
-    type: "single" | "multi" | "instruct";
-    q: string;
-    a: string;
-    system?: string;
-    instruction?: string;
-    input?: string;
-    output?: string;
-    history?: Array<{ role: "user" | "assistant"; content: string }>;
-    currentQuery?: string;
-    response?: string;
-    conversations?: Array<{ from: string; value: string }>;
-    seedIndex?: number;
+    label: string;
+    createdAt: string;
+    items: QuickGeneratedItem[];
+    stats: QuickRunStats;
   }>;
+  quickGeneratedItems: QuickGeneratedItem[];
   quickControlExpanded: boolean;
   quickInstructionTemplate: string;
   quickDiversity: number;
@@ -193,10 +204,11 @@ export function createEmptyQuickWorkspaceState(): QuickWorkspaceState {
     quickWarnings: [],
     quickTargetPerSeed: 5,
     quickFilterStrength: "medium",
-    quickConcurrency: 8,
+    quickConcurrency: 4,
     quickRunStatus: "idle",
     quickRunStats: null,
     quickRunProgress: null,
+    quickCachedBatches: [],
     quickGeneratedItems: [],
     quickControlExpanded: false,
     quickInstructionTemplate: "",
@@ -211,8 +223,19 @@ export function clearQuickWorkspaceResults(state: QuickWorkspaceState): QuickWor
     quickRunStatus: "idle",
     quickRunStats: null,
     quickRunProgress: null,
+    quickCachedBatches: [],
     quickGeneratedItems: [],
   };
+}
+
+export function getFineTuneProgressPercent(args: {
+  stage: "idle" | "preparing" | "generating";
+  completed: number;
+  total: number;
+}) {
+  if (args.stage === "idle" || args.total <= 0) return 0;
+  if (args.stage === "generating") return 92;
+  return Math.min(90, Math.round((args.completed / args.total) * 100));
 }
 
 export function getQuickProgressPercent(args: {
