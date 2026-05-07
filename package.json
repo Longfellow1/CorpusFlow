@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "keepalive": "tsx scripts/keepalive.ts",
     "test:regression": "tsx scripts/regression/test-regression.ts",
     "test:evaluate": "tsx scripts/regression/evaluate-prompts.ts"
   },

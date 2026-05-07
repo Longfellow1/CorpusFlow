@@ -238,7 +238,7 @@ function getTaskBadge(task: Task) {
 const MIN_EXPANSION_RATIO = 5;
 const MAX_EXPANSION_RATIO = 100;
 const MAX_EXPANSION_CANDIDATES = 7;
-const MAX_SEED_PROCESS_CONCURRENCY = 6;
+const MAX_SEED_PROCESS_CONCURRENCY = 2;
 const AUTO_SAVE_ANIMATION_INTERVAL_MS = 30_000;
 
 function createEmptyAnalysis() {
