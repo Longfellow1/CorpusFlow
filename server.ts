@@ -118,6 +118,10 @@ function getGeneratedFile(taskId: string) {
   return path.join(DATA_DIR, `gen_${taskId}.json`);
 }
 
+function getWorkspaceFile(taskId: string) {
+  return path.join(DATA_DIR, `workspace_${taskId}.json`);
+}
+
 function assertTaskOwner(taskId: string, userId: string, res: express.Response): boolean {
   const tasks = readJsonFile<Task[]>(TASKS_FILE, []);
   const task = tasks.find((t) => t.id === taskId);
@@ -128,11 +132,12 @@ function assertTaskOwner(taskId: string, userId: string, res: express.Response):
   return true;
 }
 
-async function callAlgorithm<T>(endpoint: string, payload: unknown): Promise<T> {
+async function callAlgorithm<T>(endpoint: string, payload: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${ALGORITHM_BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok) {
@@ -143,11 +148,20 @@ async function callAlgorithm<T>(endpoint: string, payload: unknown): Promise<T> 
   return (await response.json()) as T;
 }
 
+async function postAlgorithmControl<T>(endpoint: string): Promise<T> {
+  const response = await fetch(`${ALGORITHM_BASE}${endpoint}`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Algorithm service error ${response.status}: ${text}`);
+  }
+  return (await response.json()) as T;
+}
+
 async function startServer() {
   ensureDataDir();
   ALGORITHM_BASE = await resolveAlgorithmBase();
   const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "10mb" }));
 
   app.get("/api/health", async (_req, res) => {
     let algorithm = { ok: false, baseUrl: ALGORITHM_BASE };
@@ -207,6 +221,22 @@ async function startServer() {
     return res.json(task);
   });
 
+  app.patch("/api/tasks/:id", (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+    const task = allTasks.find((item) => item.id === req.params.id && item.userId === userId);
+    if (!task) {
+      return res.status(404).json({ error: "任务不存在" });
+    }
+    const name = String(req.body?.name || "").trim();
+    if (name.length < 1 || name.length > 80) {
+      return res.status(400).json({ error: "任务名称长度需为 1-80 个字符" });
+    }
+    const updatedTask = { ...task, name };
+    saveTasks(allTasks.map((item) => (item.id === task.id ? updatedTask : item)));
+    return res.json(updatedTask);
+  });
+
   app.delete("/api/tasks/:id", (req, res) => {
     const userId = getUserIdFromAuth(req);
     const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
@@ -216,8 +246,10 @@ async function startServer() {
     saveTasks(nextTasks);
     const seedFile = getSeedFile(req.params.id);
     const genFile = getGeneratedFile(req.params.id);
+    const workspaceFile = getWorkspaceFile(req.params.id);
     if (fs.existsSync(seedFile)) fs.unlinkSync(seedFile);
     if (fs.existsSync(genFile)) fs.unlinkSync(genFile);
+    if (fs.existsSync(workspaceFile)) fs.unlinkSync(workspaceFile);
     return res.json({ success: true });
   });
 
@@ -254,6 +286,22 @@ async function startServer() {
     const userId = getUserIdFromAuth(req);
     if (!assertTaskOwner(req.params.taskId, userId, res)) return;
     await writeJsonFileLocked(getGeneratedFile(req.params.taskId), req.body);
+    return res.json(req.body);
+  });
+
+  app.get("/api/tasks/:taskId/workspace", (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    return res.json(readJsonFile(getWorkspaceFile(req.params.taskId), null));
+  });
+
+  app.post("/api/tasks/:taskId/workspace", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "workspace 必须是对象" });
+    }
+    await writeJsonFileLocked(getWorkspaceFile(req.params.taskId), req.body);
     return res.json(req.body);
   });
 
@@ -308,10 +356,23 @@ async function startServer() {
   });
 
   app.post("/api/algorithm/quick-generate", async (req, res) => {
+    const controller = new AbortController();
+    let completed = false;
+    req.on("aborted", () => {
+      if (!completed) controller.abort();
+    });
+    res.on("close", () => {
+      if (!completed) controller.abort();
+    });
     try {
-      const result = await callAlgorithm("/quick-generate", req.body);
+      const result = await callAlgorithm("/quick-generate", req.body, controller.signal);
+      completed = true;
       return res.json(result);
     } catch (error) {
+      completed = true;
+      if (error instanceof Error && error.name === "AbortError") {
+        return res.status(499).json({ error: "快速生成已暂停" });
+      }
       console.error(error);
       // Surface 422 validation errors directly to the client
       const msg = error instanceof Error ? error.message : "";
@@ -325,6 +386,16 @@ async function startServer() {
         }
       }
       return res.status(502).json({ error: "算法服务快速生成失败" });
+    }
+  });
+
+  app.post("/api/algorithm/quick-generate/:jobId/pause", async (req, res) => {
+    try {
+      const result = await postAlgorithmControl(`/quick-generate/${encodeURIComponent(req.params.jobId)}/cancel`);
+      return res.json(result);
+    } catch (error) {
+      console.error(error);
+      return res.status(502).json({ error: "算法服务暂停失败" });
     }
   });
 
@@ -360,18 +431,61 @@ async function startServer() {
   app.post("/api/tasks/:taskId/export", (req, res) => {
     const { format = "json", items = [] } = req.body || {};
 
+    const toMultiRecord = (item: any) => {
+      const conversations = item.conversations || [
+        { from: "human", value: item.history?.[0]?.content ?? "" },
+        { from: "gpt", value: item.history?.[1]?.content ?? "" },
+        { from: "human", value: item.currentQuery ?? item.q ?? "" },
+        { from: "gpt", value: item.response ?? item.a ?? "" },
+      ];
+      return {
+        history: item.history ?? [
+          { role: "user", content: conversations[0]?.value ?? "" },
+          { role: "assistant", content: conversations[1]?.value ?? "" },
+        ],
+        currentQuery: item.currentQuery ?? conversations[2]?.value ?? item.q ?? "",
+        response: item.response ?? conversations[3]?.value ?? item.a ?? "",
+        conversations,
+      };
+    };
+
+    const toLlamaFactoryHistory = (item: any) => {
+      if (Array.isArray(item.history) && item.history.length >= 2) {
+        const pairs = [];
+        for (let index = 0; index + 1 < item.history.length; index += 2) {
+          pairs.push([item.history[index]?.content ?? "", item.history[index + 1]?.content ?? ""]);
+        }
+        return pairs.filter(([query, answer]) => query || answer);
+      }
+      if (Array.isArray(item.conversations) && item.conversations.length >= 2) {
+        const pairs = [];
+        for (let index = 0; index + 1 < item.conversations.length - 1; index += 2) {
+          pairs.push([item.conversations[index]?.value ?? "", item.conversations[index + 1]?.value ?? ""]);
+        }
+        return pairs.filter(([query, answer]) => query || answer);
+      }
+      return [];
+    };
+
+    const toInstructRecord = (item: any) => {
+      const history = toLlamaFactoryHistory(item);
+      return {
+        ...(item.system ? { system: item.system } : {}),
+        instruction: item.instruction ?? "",
+        input: item.input ?? "",
+        output: item.output ?? item.a ?? "",
+        ...(history.length > 0 ? { history } : {}),
+      };
+    };
+
     let content: string;
     if (format === "jsonl") {
       content = (items as any[]).map((item: any) => {
         let record: Record<string, unknown>;
-        if (item.type === "multi" && item.conversations) {
-          record = { conversations: item.conversations };
+        if (item.type === "multi") {
+          record = toMultiRecord(item);
         } else if (item.type === "instruct" || item.type === "code") {
-          record = {
-            instruction: item.instruction ?? "",
-            input: item.input ?? "",
-            output: item.output ?? "",
-          };
+          record = toInstructRecord(item);
         } else {
           // qa / single
           record = {
@@ -383,22 +497,36 @@ async function startServer() {
         return JSON.stringify(record);
       }).join("\n");
     } else if (format === "csv") {
-      content = "Type,Query,Response\n" +
-        (items as any[]).map((item: any) =>
-          [item.type, item.q ?? item.input ?? "", item.a ?? item.output ?? ""].map(escapeCsvField).join(",")
-        ).join("\n");
+      content = "Type,System,Instruction,Input,Output,History\n" +
+        (items as any[]).map((item: any) => {
+          if (item.type === "multi") {
+            const record = toMultiRecord(item);
+            return [
+              item.type,
+              "",
+              record.currentQuery,
+              "",
+              record.response,
+              record.history.map((turn: any) => `${turn.role}: ${turn.content}`).join("\n"),
+            ].map(escapeCsvField).join(",");
+          }
+          if (item.type === "instruct" || item.type === "code") {
+            const record = toInstructRecord(item);
+            const history = Array.isArray((record as any).history)
+              ? (record as any).history.map((turn: any) => `${turn[0]} => ${turn[1]}`).join("\n")
+              : "";
+            return [item.type, record.system ?? "", record.instruction, record.input, record.output, history].map(escapeCsvField).join(",");
+          }
+          return [item.type, "", item.q ?? "", "", item.a ?? "", ""].map(escapeCsvField).join(",");
+        }).join("\n");
     } else {
       // JSON export - strip metadata fields (id, seedIndex, type)
       const cleanedItems = (items as any[]).map((item: any) => {
-        if (item.type === "multi" && item.conversations) {
-          return { conversations: item.conversations };
+        if (item.type === "multi") {
+          return toMultiRecord(item);
         }
         if (item.type === "instruct" || item.type === "code") {
-          return {
-            instruction: item.instruction ?? "",
-            input: item.input ?? "",
-            output: item.output ?? "",
-          };
+          return toInstructRecord(item);
         }
         // qa / single
         return {

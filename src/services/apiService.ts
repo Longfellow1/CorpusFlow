@@ -1,4 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+const TOKEN_STORAGE_KEY = "corpusflow.authToken";
+const EMAIL_STORAGE_KEY = "corpusflow.userEmail";
 
 let authToken = "";
 
@@ -19,7 +21,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const rawMessage = await response.text();
+    let message = rawMessage;
+    try {
+      const parsed = JSON.parse(rawMessage) as { error?: string; detail?: string; message?: string };
+      message = parsed.error || parsed.detail || parsed.message || rawMessage;
+    } catch {
+      message = rawMessage;
+    }
     throw new Error(message || `Request failed: ${response.status}`);
   }
 
@@ -41,8 +50,25 @@ export const apiService = {
     authToken = token;
   },
 
+  setSession(token: string, email: string) {
+    authToken = token;
+    window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    window.localStorage.setItem(EMAIL_STORAGE_KEY, email);
+  },
+
+  getStoredSession() {
+    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY) || "";
+    const email = window.localStorage.getItem(EMAIL_STORAGE_KEY) || "";
+    if (token) {
+      authToken = token;
+    }
+    return { token, email };
+  },
+
   clearToken() {
     authToken = "";
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(EMAIL_STORAGE_KEY);
   },
 
   async login(email: string, password: string) {
@@ -70,6 +96,13 @@ export const apiService = {
   }) {
     return request<ApiTask>("/api/tasks", {
       method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateTask(taskId: string, payload: { name: string }) {
+    return request<ApiTask>(`/api/tasks/${taskId}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     });
   },
@@ -102,6 +135,17 @@ export const apiService = {
     });
   },
 
+  async getWorkspace<T = any>(taskId: string) {
+    return request<T | null>(`/api/tasks/${taskId}/workspace`);
+  },
+
+  async saveWorkspace<T = any>(taskId: string, workspace: T) {
+    return request<T>(`/api/tasks/${taskId}/workspace`, {
+      method: "POST",
+      body: JSON.stringify(workspace),
+    });
+  },
+
   async generate(taskId: string, payload: any) {
     return request<{ items: any[]; meta: { count: number; mode: string } }>(
       `/api/tasks/${taskId}/generate`,
@@ -113,15 +157,39 @@ export const apiService = {
   },
 
   async quickGenerate(payload: {
+    job_id?: string;
     seeds: string[];
-    type: "qa" | "multi" | "instruct" | "code";
+    type: "qa" | "multi" | "instruct";
+    multi_turn?: boolean;
     target_per_seed: number;
     filter_strength: "loose" | "medium" | "strict";
     concurrency?: number;
     instruction_template?: string;
-  }) {
+    system_prompt?: string;
+    seed_instructions?: string[];
+    seed_systems?: string[];
+    seed_inputs?: string[];
+    diversity?: number;
+    generation_intent?: string;
+  }, signal?: AbortSignal) {
     return request<{
-      items: Array<{ id?: string; seed_index?: number; q?: string; a?: string; instruction?: string; input?: string; output?: string; conversations?: Array<{ from: string; value: string }> }>;
+      job_id?: string;
+      status?: "done" | "cancelled";
+      items: Array<{
+        id?: string;
+        seed_index?: number;
+        q?: string;
+        a?: string;
+        system?: string;
+        instruction?: string;
+        input?: string;
+        output?: string;
+        history?: Array<{ role: "user" | "assistant"; content: string }>;
+        currentQuery?: string;
+        response?: string;
+        conversations?: Array<{ from: string; value: string }>;
+      }>;
+      errors?: Array<{ seed_index?: number; error?: string }> | null;
       stats: {
         seeds_count: number;
         total_generated: number;
@@ -130,8 +198,29 @@ export const apiService = {
       };
     }>("/api/algorithm/quick-generate", {
       method: "POST",
+      signal,
       body: JSON.stringify(payload),
     });
+  },
+
+  async cancelQuickGenerate(jobId: string) {
+    return request<{ success: boolean; status?: string }>(
+      `/api/algorithm/quick-generate/${jobId}/pause`,
+      { method: "POST" },
+    );
+  },
+
+  async pauseQuickGenerate(jobId: string) {
+    return this.cancelQuickGenerate(jobId);
+  },
+
+  async getQuickGenerateProgress(jobId: string) {
+    return request<{
+      total: number;
+      done: number;
+      errors: number;
+      status: "running" | "done" | "cancelled";
+    }>(`/api/algorithm/progress/${encodeURIComponent(jobId)}`);
   },
 
   async export(taskId: string, payload: any) {

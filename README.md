@@ -1,8 +1,8 @@
-# CorpusFlow·指令微调数据工程平台
+# CorpusFlow
 
-> **把大模型微调数据，从「手工作坊」升级为「工业化生产线」 —— 先锚定语义骨架，再扩展实体。**
+> 面向微调和评测的数据生产工作台：把零散的 query、badcase、FAQ 和种子样本，批量转成可审计、可导出的训练数据。
 
-CorpusFlow 是一个开源的 LLM 微调数据工程平台。专门解决批量数据构造里最难的一对矛盾 —— **幻觉让质量失控，人工又扛不住规模** —— 用**"结构化约束"生成范式** + **上游闭环**把"线上问题 → 训练资产"的周期从天级拉到小时级。
+CorpusFlow 不是一个 Prompt 游乐场。它把“导入原始数据 → 字段识别 → 敏感拒识 → 批量生成 → 人工复核 → JSON/CSV/JSONL 导出”做成一条可重复的工作流，服务于需要持续准备 SFT、QA、多轮对话和评测数据的算法、测试与业务团队。
 
 *[English → README.en.md](README.en.md)*
 
@@ -12,170 +12,108 @@ CorpusFlow 是一个开源的 LLM 微调数据工程平台。专门解决批量�
 
 ---
 
-## 为什么存在
+## 为什么需要 CorpusFlow
 
-大模型迭代卡在一个地方 —— **数据质量**。大多数团队撞上的都是同一堵墙：
+微调数据生产通常卡在三个地方：
 
-- **人工构造** 依赖经验、不 scale，把高级工程师的时间耗在杂活上
-- **批量生成** 语义漂移、关键实体丢失、幻觉混进训练集
-- **线上 badcase** 堆在日志里好几天，才被人工变成训练样本
+- **手工造样本太慢**：算法、测试或业务同学需要反复写 query、补 output、整理格式。
+- **直接让模型批量扩写不可信**：实体漂移、格式不稳定、敏感内容混入，最后仍要人工清洗。
+- **badcase 很难变成资产**：线上问题、测试失败、用户反馈散落在日志和表格里，不能快速回流训练。
 
-三选二？你其实三个都要：规模、可控、接到线上。
-
-**CorpusFlow 就是让你三个都拿到的那条生产线。**
+CorpusFlow 的目标是让数据生产从“临时手工活”变成“可配置、可复核、可导出”的工程流程。
 
 ---
 
-## 范式：结构化约束
+## 一个典型流程
 
-无约束的批量扩展会幻觉，纯人工整理又不 scale。答案是**把生成拆成两个阶段，分配给不同的操作者**：
+上传一份 CSV：
 
-```
-   种子数据
-      │
-      ▼
-  ┌────────────────────────────┐
-  │  1. 语义骨架构建             │   ← Human-in-the-loop
-  │     （句法抽象）             │     人审人调，锁定结构
-  └──────────────┬──────────────┘
-                 │  锁定的语义骨架
-                 ▼
-  ┌────────────────────────────┐
-  │  2. 实体填充扩展             │   ← LLM 做量
-  │     （骨架边界内，           │     在人给定的边界里
-  │      变化实体）              │
-  └──────────────┬──────────────┘
-                 │
-                 ▼
-  ┌────────────────────────────┐
-  │  3. 质量门控                 │   ← 实体一致性 +
-  │     （多维校验）             │     语义相似度双重校验
-  └────────────────────────────┘
+```csv
+query,input,output,system
+导航去虹桥机场,,请先确认出发地，再给出导航规划,你是车载语音助手
+我快没油了，帮我找顺路加油站,,推荐顺路加油站，并说明绕行成本,
+色情片在哪里看,,,
 ```
 
-**人管结构（质量所在）**，**LLM 管规模（量所在）**。语义骨架用 NLP 风格的句法抽象生成 —— 类似"语义上的语法模板"。骨架一旦锁定，后续批量裂变不会语义漂移、不会丢关键实体。
+CorpusFlow 会自动完成：
 
-这就是核心创新：**规模与可控，不再是取舍。**
+1. 识别 `query / input / output / system` 等字段。
+2. 将 `query` 映射为 `Instruction`，将 `system` 映射为助手角色。
+3. 拒识敏感样本，并在结果里保留拒识原因。
+4. 对正常样本批量生成 QA、Alpaca Instruct 或多轮对话数据。
+5. 导出 JSON、CSV 或 JSONL，进入训练或评测流水线。
+
+指令微调导出的 Alpaca 结构示例：
+
+```json
+{
+  "system": "你是车载语音助手",
+  "instruction": "导航去虹桥机场",
+  "input": "",
+  "output": "请先告诉我你的出发地，我可以帮你规划前往虹桥机场的路线。"
+}
+```
 
 ---
 
-## 任务驱动，不是 Prompt 驱动
+## 谁适合用
 
-与其把 Prompt 工程暴露给每个用户，不如抽象三个任务模板，覆盖绝大多数真实生产需求：
+- **算法工程师**：需要快速构造 SFT、QA、多轮对话训练数据。
+- **测试工程师**：需要把测试 badcase 扩展成覆盖更多表达方式的评测集。
+- **业务知识库维护者**：需要把 FAQ、SOP、工单和客服话术转成可训练格式。
+- **AI 工具参赛或演示团队**：需要一条能展示“数据进入、生成、过滤、导出”的完整链路。
 
-| 任务模板 | 输入 | 输出 |
+---
+
+## 核心能力
+
+| 能力 | 用户收益 | 证明方式 |
 |---|---|---|
-| **微调数据扩充** | 种子样本 | 同格式、多样化的训练数据 |
-| **评测集构造** | 话题 / 能力清单 | 多样性覆盖的评测 query |
-| **Badcase 定向增强** | 一条线上 badcase | 围绕该失败模式的强化样本 |
-
-算法和测试同学配置的是**业务约束**，不是 Prompt。底层 Workflow 被封装成像表单一样的任务卡。
-
----
-
-## 上游闭环：badcase → 训练资产，周期从天到小时
-
-CorpusFlow 与上游对话分析平台打通，把闭环跑起来：
-
-```
- 线上对话
-      │
-      ▼  风险 / 价值打分
- 高信号 Q&A
-      │
-      ▼  结构化为「语义资产」
- 一键推送 ─────────► CorpusFlow
-                            │
-                            ▼  定向裂变
-                     50 条强化样本
-                            │
-                            ▼
-                     训练语料库
-```
-
-这个闭环把 badcase-to-training 的周期从**天级压到小时级** —— 一个以产线速度迭代的 Data-Centric AI 回路。
+| 快速任务批量导入 | 从表格直接进入生成流程，减少手工字段整理 | 自动识别 `query/question/user_query/问题`、`input/context/content/材料`、`output/answer/response`、`system/role/persona/角色设定` |
+| 指令微调字段契约 | 导出的数据能对齐 LLaMA-Factory Alpaca 结构 | UI 明确展示 `助手角色 System`、`用户问题 Instruction`、`补充材料 Input`、`期望输出 Output` |
+| 拒识与安全保护 | 敏感样本不会混入普通生成结果，同时保留可审计记录 | 被拒识的 seed 会在结果列表标记“拒绝”并展示原因 |
+| 精调生成工作台 | 对单条高价值 seed 做语义解析、候选扩写和训练样本预览 | 工作流包含种子语句、句子解析、仿写句子、训练样本预览、生成控制 |
+| 多轮数据支持 | 能构造上一轮 1Q1A + 当前轮的对话样本 | 导出 ShareGPT 风格 `conversations` / history 结构 |
+| 进度与导出 | 长任务不是“发出去等结果”，而是可观察、可暂停、可导出 | 快速任务展示已完成种子、保留数量、保留率，并支持 JSON/CSV/JSONL |
 
 ---
 
-## 它是什么，它拒绝成为什么
+## 支持的数据形态
 
-| 它**是** | 它**拒绝成为** |
-|---|---|
-| 一条有范式的生产线 | Prompt 游乐场 |
-| 只在关键处用人工（结构） | 把人工塞进每一环（人肉流水线） |
-| 与线上数据联通的闭环 | 孤立的数据工厂 |
-| 白盒、可追溯、每一步可审计 | "AI 魔法"黑盒 |
+| 类型 | 适合场景 | 主要字段 |
+|---|---|---|
+| QA | 问答数据、客服回复、知识库问答 | `q`, `a` |
+| Instruction / Alpaca | 指令微调、LLaMA-Factory SFT | `system`, `instruction`, `input`, `output` |
+| Multi-turn / ShareGPT | 多轮对话、上下文承接 | `conversations` 或 `history/currentQuery/response` |
 
----
-
-## 关键成果（内部上线）
-
-- **生成效率 3×+** vs. 手工 Prompt
-- **人工采纳率 90%+**（首轮裂变数据直接可用的比例）
-- 定义了团队的**数据工程标准** —— 从"经验驱动"升级为"策略驱动"
-- 作为默认数据管道，支撑了多个线上微调项目
-- Badcase → 训练：**天级 → 小时级**
-
----
-
-## 架构
-
-三层分离。UI 是工作台，Node 层负责业务逻辑和文件安全，Python 层负责 LLM 编排和两阶段生成范式。
-
-```
-┌─────────────────────────────────────────────┐
-│  React 前端 + TypeScript                     │  工作台
-│  (Vite + Tailwind)                           │  • 种子导入 & 预览
-└──────────────┬──────────────────────────────┘  • 任务卡 & 进度
-               │                                  • 实时导出
-               │ REST (Express)
-               ▼
-┌─────────────────────────────────────────────┐
-│  Express 业务层 + TypeScript                 │  业务逻辑 & 文件 I/O
-│  (JWT、CSV 防护、进度队列)                   │  • 任务所有权
-└──────────────┬──────────────────────────────┘  • 并发写锁
-               │                                  • 格式校验
-               │ HTTP
-               ▼
-┌─────────────────────────────────────────────┐
-│  FastAPI Python 服务                          │  LLM 编排
-│  (豆包、骨架抽取、质量门控)                  │  • 两阶段生成
-│  (Prompt 注入 & 内容安全双向过滤)           │  • 语义标签
-└─────────────────────────────────────────────┘  • 重试 & 兜底
-```
-
-### 安全与健壮性
-
-- **JWT 认证** — HMAC-SHA256，7 天会话，密码零明文落盘
-- **所有权隔离** — 所有改动走 `assertTaskOwner()` 网关，杜绝跨用户越权
-- **并发写入安全** — Promise 链互斥锁保护共享文件 I/O
-- **CSV 注入防护** — RFC 4180 + 公式前缀转义（`=+-@` → `'=+-@`）
-- **内容安全双向过滤** — 分类器同时作用在输入端和 LLM 输出端
-- **Prompt 注入检测** — XML 边界标签 + 输入截断
-
-### 实时进度，不是"发出去就完了"
-
-每个生成任务返回 `job_id`，随时轮询：
-
-```
-GET /api/algorithm/progress/:jobId
-→ { generated: 42, total: 100, eta_seconds: 18, status: "running" }
-```
+所有格式均可导出为 **JSON / CSV / JSONL**。CSV 导出会做公式注入防护，避免 Excel 打开时把 `= + - @` 开头内容误当公式执行。
 
 ---
 
 ## 快速开始
 
-```bash
-git clone https://github.com/your-org/corpusflow.git
-cd corpusflow
-bash setup.sh         # 检查 Node 20+ / Python 3.11+ / uv，引导填 API key
-npm run dev:all       # 起前端 + 后端 + Python 服务
+### 本地开发
 
-# 浏览器打开 http://localhost:3000
+```bash
+git clone https://github.com/Longfellow1/CorpusFlow-.git
+cd CorpusFlow
+
+bash setup.sh
+npm run dev:all
 ```
 
-Docker（可选）：
+打开：
+
+```text
+http://localhost:3000
+```
+
+`npm run dev:all` 会同时启动：
+
+- React + Express：`http://localhost:3000`
+- FastAPI 算法服务：`http://localhost:8001`
+
+### Docker
 
 ```bash
 docker compose up --build
@@ -185,63 +123,195 @@ docker compose up --build
 
 ## 环境变量
 
-复制 `.env.example` → `.env.local`，编辑：
+复制 `.env.example` 为 `.env.local`，至少配置：
 
 ```bash
 PORT=3000
 ALGORITHM_BASE_URL=http://127.0.0.1:8001
 
-# 豆包（字节跳动） — https://console.volcengine.com/iam/keymanage
-ARK_API_KEY=你的_key
-ARK_MODEL=doubao-seed-1-6-250615
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_API_KEY=your_key_here
+ARK_MODEL=doubao-seed-1-6-250615
 ARK_TIMEOUT_SECONDS=120
 
 VITE_API_BASE_URL=
 ```
 
+说明：
+
+- `ARK_API_KEY` 只放后端环境变量，不要放进前端或公开材料。
+- `VITE_API_BASE_URL` 只用于前端指向 API 地址，部署到 Cloudflare Pages 时可设置为公网 API 域名。
+- 本地开发时 `VITE_API_BASE_URL` 可以留空，走同源 API。
+
 ---
 
-## 支持的输出格式
+## 常用命令
 
-| 类型 | 字段 | 微调风格 |
-|---|---|---|
-| **QA** | `q`, `a` | 基础问答 |
-| **Instruct** | `instruction`, `input`, `output` | Alpaca |
-| **Multi-turn** | `conversations: [{from, value}]` | ShareGPT |
-| **Code** | `instruction`, `code` | 代码模型 SFT |
+```bash
+npm run dev          # 启动 React + Express
+npm run dev:algorithm # 启动 Python 算法服务
+npm run dev:all      # 同时启动前后端和算法服务
+npm run build        # Vite 生产构建
+npm run lint         # TypeScript 类型检查
+```
 
-所有格式可导出为 **JSON / CSV / JSONL**，自动剥离元数据并启用注入防护。
+测试：
+
+```bash
+node --import tsx --test tests/*.test.ts
+cd algorithm && uv run python -m unittest tests.test_generation_frame
+```
+
+健康检查：
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+期望返回：
+
+```json
+{
+  "ok": true,
+  "services": {
+    "node": true,
+    "algorithm": {
+      "ok": true
+    }
+  }
+}
+```
+
+---
+
+## 产品工作区
+
+### 快速任务
+
+适合批量导入 CSV / XLSX 后直接生成。核心路径：
+
+```text
+上传文件 → 自动识别字段 → 选择 QA / 指令微调 / 多轮 → 填写助手角色 → 生成 → 导出
+```
+
+适合场景：
+
+- 一批 FAQ 转训练数据
+- 一批 badcase 扩展成评测 query
+- 一批用户问题补齐标准回答
+- 一批指令微调样本转成 Alpaca / JSONL
+
+### 精调生成
+
+适合单条高价值种子的深度扩写。核心路径：
+
+```text
+输入种子 → 句子解析 → AI 扩写候选 → 仿写句子 → 训练样本预览 → 批量生成
+```
+
+适合场景：
+
+- 针对一个 badcase 做同义表达增强
+- 控制实体、动作、对象、修饰条件的泛化范围
+- 先人工确认语义骨架，再让模型批量生成
+
+---
+
+## 架构
+
+```text
+┌─────────────────────────────────────────────┐
+│ React + TypeScript + Vite                   │
+│ 数据导入、任务工作台、生成进度、结果编辑与导出 │
+└───────────────────┬─────────────────────────┘
+                    │ REST
+                    ▼
+┌─────────────────────────────────────────────┐
+│ Express + TypeScript                        │
+│ 登录认证、任务所有权、工作区持久化、导出安全   │
+└───────────────────┬─────────────────────────┘
+                    │ HTTP
+                    ▼
+┌─────────────────────────────────────────────┐
+│ FastAPI + Python                            │
+│ LLM 编排、语义解析、批量生成、进度与取消       │
+└─────────────────────────────────────────────┘
+```
+
+第一版部署推荐：
+
+```text
+Cloudflare Pages
+  → React/Vite 静态前端
+  → VITE_API_BASE_URL
+  → 外部 Express API
+  → 外部 FastAPI 算法服务
+  → Ark / Doubao 模型
+```
+
+这个形态优先保证演示 URL 稳定可访问；Express 和 FastAPI 暂不强行迁移到 Cloudflare Workers。
+
+---
+
+## 安全与健壮性
+
+- **JWT 认证**：HMAC-SHA256 会话令牌。
+- **任务所有权隔离**：任务、种子、结果和工作区读写前校验所属用户。
+- **并发写入保护**：共享文件 I/O 使用 Promise 链互斥，降低数据损坏风险。
+- **CSV 注入防护**：导出时转义公式前缀。
+- **敏感拒识**：政治敏感、暴力违法、色情获取等输入会在生成前拦截。
+- **Prompt 注入防护**：算法层对外部输入做边界包裹与长度限制。
+
+---
+
+## 当前边界
+
+- 当前存储以本地 JSON 文件为主，适合演示和小团队内测；生产化建议迁移到数据库或对象存储。
+- 算法服务依赖外部 LLM API，生成稳定性受模型服务、网络和 API key 配额影响。
+- README 暂未包含正式截图或 GIF；建议后续补一张快速任务结果页截图。
+- 仓库暂未提供 CONTRIBUTING.md 和 GitHub Actions 工作流。
 
 ---
 
 ## 路线图
 
-- [x] 骨架优先的两阶段生成（4 种格式）
-- [x] 三类高频任务的任务卡抽象
-- [x] 上游对话平台集成（badcase 闭环）
-- [x] 多维质量门控（实体一致性 + 语义相似度）
-- [x] JWT 认证 · 内容安全 · Prompt 注入检测 · CSV 注入防护
-- [ ] 语义去重
-- [ ] 数据集 diff 与对比
-- [ ] 导出到 Hugging Face Datasets Hub
-- [ ] 骨架库 —— 跨任务可复用的语义模板
+- [x] 快速任务批量导入与字段识别
+- [x] QA / Instruction / Multi-turn 三类输出
+- [x] LLaMA-Factory Alpaca 字段契约
+- [x] 拒识样本保留与原因展示
+- [x] JSON / CSV / JSONL 导出
+- [x] Cloudflare Pages + 外部后端部署方案
+- [ ] 示例数据包与截图
+- [ ] 数据集 diff 与版本对比
+- [ ] Hugging Face Datasets Hub 导出
+- [ ] 数据库存储与 Cloudflare 半原生改造
 
 ---
 
-## 开源协议
+## 贡献
 
-Apache License 2.0 —— 见 [LICENSE](LICENSE)。
+欢迎提交 Issue 和 PR，尤其是：
+
+- 新的字段识别别名
+- 更稳定的生成与过滤策略
+- 更多训练数据格式适配
+- 演示样例、文档和部署脚本
+
+正式贡献指南待补充：`TODO: add CONTRIBUTING.md`。
+
+---
+
+## License
+
+Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 Copyright 2026 Harland.
+
+---
 
 ## 作者
 
 **Harland** —— AI Native 产品经理。
 
-- 邮箱: Harland5588@gmail.com
+- 邮箱: Harland5588@outlook.com
 - GitHub: [@Longfellow1](https://github.com/Longfellow1)
-
----
-
-> *大模型迭代的真正杠杆，不是模型本身，而是喂给它的数据工程。*

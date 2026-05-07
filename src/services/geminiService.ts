@@ -72,7 +72,15 @@ export async function generateQA(
   sentence: string,
   options?: { context?: string; overallRequirement?: string; styleAdjustment?: string },
 ) {
-  return post<{ q1: string; a1: string; q2: string; a2: string }>(
+  return post<{
+    q1?: string;
+    a1?: string;
+    q2?: string;
+    a2?: string;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
+    currentQuery?: string;
+    response?: string;
+  }>(
     "/api/algorithm/qa",
     { sentence, ...options },
   );
@@ -82,7 +90,14 @@ export async function generateInstruct(
   sentence: string,
   options?: { context?: string; overallRequirement?: string; styleAdjustment?: string },
 ) {
-  return post<{ query: string; instruct: string }>(
+  return post<{
+    system?: string;
+    instruction?: string;
+    input?: string;
+    output?: string;
+    query?: string;
+    instruct?: string;
+  }>(
     "/api/algorithm/instruct",
     { sentence, ...options },
   );

@@ -1,12 +1,14 @@
 import * as XLSX from "xlsx";
 
-export type QuickTaskKind = "qa" | "instruct" | "multi" | "code";
+export type QuickTaskKind = "qa" | "instruct" | "multi";
 
 export type QuickTaskRow = {
   query?: string;
   input?: string;
   output?: string;
   instruction?: string;
+  system?: string;
+  history?: string;
   raw: Record<string, string>;
 };
 
@@ -18,14 +20,19 @@ export type QuickTaskParsedFile = {
     input?: string;
     output?: string;
     instruction?: string;
+    system?: string;
+    history?: string;
   };
   rows: QuickTaskRow[];
   warnings: string[];
 };
 
-const QUERY_ALIASES = ["query", "q", "sentence", "text", "prompt"];
-const INPUT_ALIASES = ["input", "instruction", "prompt", "query"];
-const OUTPUT_ALIASES = ["output", "out", "answer", "response", "label", "outpu"];
+const INSTRUCTION_ALIASES = ["instruction", "query", "question", "userquery", "用户问题", "问题", "prompt"];
+const QUERY_ALIASES = INSTRUCTION_ALIASES;
+const INPUT_ALIASES = ["input", "context", "content", "材料"];
+const OUTPUT_ALIASES = ["output", "out", "answer", "response", "assistant", "label", "outpu"];
+const SYSTEM_ALIASES = ["system", "role", "persona", "角色设定"];
+const HISTORY_ALIASES = ["history", "conversation", "messages"];
 
 function cleanHeader(value: string) {
   return value.trim().toLowerCase().replace(/[\s_-]+/g, "");
@@ -44,22 +51,26 @@ function findHeader(headers: string[], aliases: string[]) {
   return matched?.raw;
 }
 
+function getMappedCell(raw: Record<string, string>, aliases: string[]) {
+  const header = findHeader(Object.keys(raw), aliases);
+  return header ? raw[header] || "" : "";
+}
+
 export function detectQuickTaskKindFromHeaders(headers: string[]): QuickTaskKind {
   const normalized = headers.map(cleanHeader);
   const hasInput = INPUT_ALIASES.some((alias) => normalized.includes(alias));
   const hasOutput = OUTPUT_ALIASES.some((alias) => normalized.includes(alias));
-  const hasInstruction = normalized.includes("instruction");
+  const hasInstruction = INSTRUCTION_ALIASES.some((alias) => normalized.includes(alias));
   if (hasInput && hasOutput) {
     return "instruct";
   }
-  if (hasInstruction && (hasInput || hasOutput)) {
+  if (hasInstruction) {
     return "instruct";
   }
-  if (hasInstruction && !normalized.some((alias) => QUERY_ALIASES.includes(alias))) {
+  if (hasOutput) {
     return "instruct";
   }
-  const hasQuery = QUERY_ALIASES.some((alias) => normalized.includes(alias));
-  return hasQuery ? "qa" : "qa";
+  return "qa";
 }
 
 export function normalizeQuickTaskRows(rows: Record<string, unknown>[], kind: QuickTaskKind): QuickTaskRow[] {
@@ -71,15 +82,17 @@ export function normalizeQuickTaskRows(rows: Record<string, unknown>[], kind: Qu
 
       if (kind === "instruct") {
         return {
-          input: raw.input || raw.query || "",
-          output: raw.output || raw.answer || raw.response || "",
-          instruction: raw.instruction || "",
+          input: getMappedCell(raw, INPUT_ALIASES),
+          output: getMappedCell(raw, OUTPUT_ALIASES),
+          instruction: getMappedCell(raw, INSTRUCTION_ALIASES),
+          system: getMappedCell(raw, SYSTEM_ALIASES),
+          history: getMappedCell(raw, HISTORY_ALIASES),
           raw,
         } satisfies QuickTaskRow;
       }
 
       return {
-        query: raw.query || raw.input || "",
+        query: getMappedCell(raw, QUERY_ALIASES) || getMappedCell(raw, INPUT_ALIASES),
         raw,
       } satisfies QuickTaskRow;
     })
@@ -120,7 +133,9 @@ function inferKindAndColumns(rows: Record<string, unknown>[]) {
     query: findHeader(headers, QUERY_ALIASES),
     input: findHeader(headers, INPUT_ALIASES),
     output: findHeader(headers, OUTPUT_ALIASES),
-    instruction: findHeader(headers, ["instruction"]),
+    instruction: findHeader(headers, INSTRUCTION_ALIASES),
+    system: findHeader(headers, SYSTEM_ALIASES),
+    history: findHeader(headers, HISTORY_ALIASES),
   };
   return { kind, columns };
 }
@@ -131,7 +146,11 @@ export async function parseQuickTaskFile(file: File): Promise<QuickTaskParsedFil
 
   if (name.endsWith(".json")) {
     rows = parseJsonRows(await file.text());
-  } else if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".xlsx") || name.endsWith(".xls")) {
+  } else if (name.endsWith(".csv") || name.endsWith(".tsv")) {
+    const text = await file.text();
+    const workbook = XLSX.read(text, { type: "string" });
+    rows = parseSheetRows(workbook);
+  } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
     rows = parseSheetRows(workbook);
@@ -165,12 +184,24 @@ export async function parseQuickTaskFile(file: File): Promise<QuickTaskParsedFil
 export function buildQuickTaskSeedText(row: QuickTaskRow, kind: QuickTaskKind): string {
   switch (kind) {
     case "instruct":
-      return row.input || row.query || "";
+      return buildQuickTaskInstructionText(row);
     case "multi":
       return row.query || row.input || "";
-    case "code":
-      return row.instruction || row.input || row.query || "";
     default: // qa
       return row.query || row.input || row.output || row.instruction || "";
   }
+}
+
+export function buildQuickTaskInstructionText(row: QuickTaskRow): string {
+  return row.instruction?.trim() || row.query?.trim() || row.input?.trim() || "";
+}
+
+export function buildQuickTaskInputText(row: QuickTaskRow): string {
+  const instruction = buildQuickTaskInstructionText(row);
+  const input = row.input?.trim() || "";
+  return input && input !== instruction ? input : "";
+}
+
+export function buildQuickTaskSystemText(row: QuickTaskRow, fallbackSystem: string): string {
+  return row.system?.trim() || fallbackSystem.trim();
 }
