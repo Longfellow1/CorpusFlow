@@ -1,4 +1,8 @@
 # CorpusFlow
+<img width="3012" height="1586" alt="6c6592419610702ff88dff00b03ad357" src="https://github.com/user-attachments/assets/84c9aaf3-55e4-46d2-ba3c-b693e8807b6e" />
+<img width="3006" height="1582" alt="028095fa811bb82e7318f801397b4410" src="https://github.com/user-attachments/assets/663cbd90-f534-431e-b5d6-20368ab386eb" />
+<img width="2996" height="1586" alt="7f31f77c052e63273be937f40a4e192b" src="https://github.com/user-attachments/assets/d724e49e-6dc9-4224-8df8-22af0118f311" />
+
 
 > 面向微调和评测的数据生产工作台：把零散的 query、badcase、FAQ 和种子样本，批量转成可审计、可导出的训练数据。
 
