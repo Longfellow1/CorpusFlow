@@ -31,6 +31,13 @@ const INPUT_ALIASES = ["input", "context", "content", "材料"];
 const OUTPUT_ALIASES = ["output", "out", "answer", "response", "assistant", "label", "outpu"];
 const SYSTEM_ALIASES = ["system", "role", "persona", "角色设定"];
 const HISTORY_ALIASES = ["history", "conversation", "messages"];
+const HEADER_ALIAS_GROUPS = [
+  INSTRUCTION_ALIASES,
+  INPUT_ALIASES,
+  OUTPUT_ALIASES,
+  SYSTEM_ALIASES,
+  HISTORY_ALIASES,
+];
 
 function cleanHeader(value: string) {
   return value.trim().toLowerCase().replace(/[\s_-]+/g, "");
@@ -47,6 +54,13 @@ function findHeader(headers: string[], aliases: string[]) {
   const normalized = headers.map((header) => ({ raw: header, key: cleanHeader(header) }));
   const matched = normalized.find((header) => aliases.includes(header.key));
   return matched?.raw;
+}
+
+function scoreHeaders(headers: string[]) {
+  const normalized = headers.map(cleanHeader);
+  return HEADER_ALIAS_GROUPS.reduce((score, aliases) => (
+    aliases.some((alias) => normalized.includes(alias)) ? score + 1 : score
+  ), 0);
 }
 
 function getMappedCell(raw: Record<string, string>, aliases: string[]) {
@@ -165,31 +179,52 @@ function parseDelimitedRows(text: string, delimiter: "," | "\t"): Record<string,
   ));
 }
 
-async function parseXlsxRows(buffer: ArrayBuffer): Promise<Record<string, unknown>[]> {
-  const ExcelJS = await import("exceljs");
-  const workbook = new ExcelJS.default.Workbook();
-  await workbook.xlsx.load(buffer);
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) {
-    return [];
+function worksheetToRows(worksheet: import("exceljs").Worksheet): { score: number; rows: Record<string, unknown>[] } {
+  const maxHeaderRow = Math.min(worksheet.rowCount, 10);
+  let best = {
+    rowNumber: 1,
+    headers: Array.from({ length: worksheet.columnCount }, (_, index) => worksheet.getRow(1).getCell(index + 1).text.trim()),
+    score: 0,
+  };
+
+  for (let rowNumber = 1; rowNumber <= maxHeaderRow; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const headers = Array.from({ length: worksheet.columnCount }, (_, index) => row.getCell(index + 1).text.trim());
+    const score = scoreHeaders(headers);
+    if (score > best.score) {
+      best = { rowNumber, headers, score };
+    }
   }
 
-  const headerRow = worksheet.getRow(1);
-  const columnCount = headerRow.cellCount;
-  const headers = Array.from({ length: columnCount }, (_, index) => headerRow.getCell(index + 1).text.trim());
   const rows: Record<string, unknown>[] = [];
-
-  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+  for (let rowNumber = best.rowNumber + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
     const values = Object.fromEntries(
-      headers.map((header, index) => [header, row.getCell(index + 1).text.trim()]),
+      best.headers.map((header, index) => [header, row.getCell(index + 1).text.trim()]),
     );
     if (Object.values(values).some(Boolean)) {
       rows.push(values);
     }
   }
 
-  return rows;
+  return { score: best.score, rows };
+}
+
+async function parseXlsxRows(buffer: ArrayBuffer): Promise<Record<string, unknown>[]> {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.default.Workbook();
+  await workbook.xlsx.load(buffer);
+  const candidates = workbook.worksheets.map(worksheetToRows);
+  candidates.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return right.rows.length - left.rows.length;
+  });
+  return candidates[0]?.rows ?? [];
+}
+
+export function resolveQuickImportSystemTemplate(rows: QuickTaskRow[], currentTemplate: string): string {
+  const firstSystem = rows.find((row) => row.system?.trim())?.system?.trim();
+  return firstSystem || currentTemplate;
 }
 
 function inferKindAndColumns(rows: Record<string, unknown>[]) {

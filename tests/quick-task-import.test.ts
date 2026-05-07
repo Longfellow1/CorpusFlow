@@ -9,6 +9,7 @@ import {
   buildQuickTaskSystemText,
   normalizeQuickTaskRows,
   parseQuickTaskFile,
+  resolveQuickImportSystemTemplate,
 } from "../src/utils/quickTaskImport";
 
 test("detects pure query imports from query headers", () => {
@@ -218,4 +219,50 @@ test("parses xlsx uploads without the vulnerable sheetjs parser", async () => {
   assert.equal(parsed.rows[0]?.instruction, "播放陶喆的歌");
   assert.equal(parsed.rows[0]?.input, "车机音乐");
   assert.equal(parsed.rows[0]?.output, "好的，正在播放陶喆的歌曲。");
+});
+
+test("parses xlsx data when a notes sheet comes first and headers start below a title row", async () => {
+  const workbook = new ExcelJS.Workbook();
+  const notes = workbook.addWorksheet("字段说明");
+  notes.addRow(["字段", "用途"]);
+  notes.addRow(["system", "助手角色"]);
+
+  const worksheet = workbook.addWorksheet("LONG CHAT");
+  worksheet.addRow(["LONG CHAT 批量样例"]);
+  worksheet.addRow([]);
+  worksheet.addRow(["System", "Instruction", "Input", "Output", "History"]);
+  worksheet.addRow([
+    "你是通用中文对话助手，回答要自然、简洁。",
+    "帮我整理会议纪要",
+    "团队讨论了版本冻结和演示链路。",
+    "可以，建议确认部署分支并完成演示自测。",
+    '[{"role":"user","content":"内容有点散"},{"role":"assistant","content":"我可以帮你整理。"}]',
+  ]);
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const file = new File([buffer], "LONG CHAT.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+
+  const parsed = await parseQuickTaskFile(file);
+
+  assert.equal(parsed.kind, "instruct");
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.columns.system, "System");
+  assert.equal(parsed.rows[0]?.system, "你是通用中文对话助手，回答要自然、简洁。");
+});
+
+test("uses the first imported row system as the visible quick instruction template", () => {
+  const template = resolveQuickImportSystemTemplate(
+    [
+      {
+        instruction: "帮我整理会议纪要",
+        system: "你是通用中文对话助手，回答要自然、简洁。",
+        raw: {},
+      },
+    ],
+    "默认助手角色",
+  );
+
+  assert.equal(template, "你是通用中文对话助手，回答要自然、简洁。");
 });

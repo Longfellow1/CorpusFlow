@@ -43,6 +43,7 @@ import {
   buildQuickTaskSeedText,
   buildQuickTaskSystemText,
   parseQuickTaskFile,
+  resolveQuickImportSystemTemplate,
   type QuickTaskKind,
 } from "./utils/quickTaskImport";
 import {
@@ -1051,8 +1052,8 @@ export default function App() {
         },
         quickTaskKind: parsedKind,
         quickMultiTurnEnabled: parsed.kind === "multi",
-        quickInstructionTemplate: parsedKind === "instruct" && !quickInstructionTemplate.trim()
-          ? DEFAULT_INSTRUCTION_SYSTEM_PROMPT
+        quickInstructionTemplate: parsedKind === "instruct"
+          ? resolveQuickImportSystemTemplate(parsed.rows, quickInstructionTemplate.trim() ? quickInstructionTemplate : DEFAULT_INSTRUCTION_SYSTEM_PROMPT)
           : quickInstructionTemplate,
         quickRows: parsed.rows,
         quickHeaders: parsed.headers,
@@ -2792,8 +2793,8 @@ export default function App() {
                     const nextKind = kind === "multi" ? "qa" : kind;
                     return {
                       quickTaskKind: nextKind,
-                      quickInstructionTemplate: nextKind === "instruct" && !prev.quickInstructionTemplate.trim()
-                        ? DEFAULT_INSTRUCTION_SYSTEM_PROMPT
+                      quickInstructionTemplate: nextKind === "instruct"
+                        ? resolveQuickImportSystemTemplate(prev.quickRows, prev.quickInstructionTemplate.trim() ? prev.quickInstructionTemplate : DEFAULT_INSTRUCTION_SYSTEM_PROMPT)
                         : prev.quickInstructionTemplate,
                     };
                   })}
