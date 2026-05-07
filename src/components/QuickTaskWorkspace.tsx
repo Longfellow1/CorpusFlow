@@ -218,7 +218,6 @@ export function QuickTaskWorkspace({
   const openFilePicker = () => fileInputRef.current?.click();
 
   const previewTexts = useMemo(() => quickSeedTexts.slice(0, 8), [quickSeedTexts]);
-  const fileLabel = quickFile ? quickFile.name.split(".").pop()?.toUpperCase() || "FILE" : "FILE";
   const totalCount = quickRows.length;
   const validCount = quickSeedTexts.filter((_, index) => !quickRejectedSeeds[index]?.blocked).length;
   const rejectedCount = Object.keys(quickRejectedSeeds).length;
@@ -387,7 +386,7 @@ export function QuickTaskWorkspace({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".xlsx,.xls,.csv,.tsv,.json"
+            accept=".xlsx,.csv,.tsv,.json"
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -840,21 +839,6 @@ export function QuickTaskWorkspace({
       {/* ── 中央区块（全宽结果，原样保留）── */}
       <div className="flex-1 overflow-y-auto bg-[#0F0F16] p-6 custom-scrollbar">
         <div className="mx-auto max-w-6xl space-y-6">
-          <div className="rounded-3xl border border-slate-800 bg-[#1A1A27] p-6 shadow-2xl">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-widest text-slate-500">批量任务台</div>
-                <h2 className="mt-1 text-2xl font-black text-white">上传文件，自动识别，直接开跑</h2>
-                <p className="mt-2 text-sm text-slate-500">批量导入 · 自动识别字段 · 生成后直接筛选导出</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">{fileLabel}</span>
-                <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">{currentTypeLabel}</span>
-                <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">{validCount} 行有效</span>
-              </div>
-            </div>
-          </div>
-
           <div className="rounded-3xl border border-slate-800 bg-[#1A1A27] p-6">
             {quickProgressCard}
             <div className="flex items-center justify-between">

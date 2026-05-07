@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import ExcelJS from "exceljs";
 import {
   detectQuickTaskKindFromHeaders,
   buildQuickTaskInputText,
@@ -197,4 +198,24 @@ test("parses utf-8 csv uploads without corrupting chinese text", async () => {
   assert.equal(parsed.rows[0]?.instruction, "周星驰是不是有新电影");
   assert.equal(parsed.rows[0]?.system, "你是车载语音助手");
   assert.equal(parsed.rows[1]?.instruction, "色情片在哪里看");
+});
+
+test("parses xlsx uploads without the vulnerable sheetjs parser", async () => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Seeds");
+  worksheet.addRow(["instruction", "input", "output", "system"]);
+  worksheet.addRow(["播放陶喆的歌", "车机音乐", "好的，正在播放陶喆的歌曲。", "你是车载语音助手"]);
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const file = new File([buffer], "demo.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+
+  const parsed = await parseQuickTaskFile(file);
+
+  assert.equal(parsed.kind, "instruct");
+  assert.deepEqual(parsed.headers, ["instruction", "input", "output", "system"]);
+  assert.equal(parsed.rows[0]?.instruction, "播放陶喆的歌");
+  assert.equal(parsed.rows[0]?.input, "车机音乐");
+  assert.equal(parsed.rows[0]?.output, "好的，正在播放陶喆的歌曲。");
 });

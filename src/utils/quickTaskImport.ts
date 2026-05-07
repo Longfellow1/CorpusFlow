@@ -1,5 +1,3 @@
-import * as XLSX from "xlsx";
-
 export type QuickTaskKind = "qa" | "instruct" | "multi";
 
 export type QuickTaskRow = {
@@ -118,12 +116,80 @@ function parseJsonRows(text: string): Record<string, unknown>[] {
   throw new Error("JSON 文件必须是数组或包含 data 数组");
 }
 
-function parseSheetRows(workbook: XLSX.WorkBook): Record<string, unknown>[] {
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  if (!sheet) {
+function parseDelimitedRows(text: string, delimiter: "," | "\t"): Record<string, unknown>[] {
+  const rows: string[][] = [];
+  let current = "";
+  let row: string[] = [];
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"") {
+      if (quoted && next === "\"") {
+        current += "\"";
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+
+    if (char === delimiter && !quoted) {
+      row = [...row, current];
+      current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      rows.push([...row, current]);
+      row = [];
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current || row.length > 0) {
+    rows.push([...row, current]);
+  }
+
+  const [headers = [], ...dataRows] = rows.filter((cells) => cells.some((cell) => cell.trim()));
+  return dataRows.map((cells) => (
+    Object.fromEntries(headers.map((header, index) => [header.trim(), cells[index]?.trim() ?? ""]))
+  ));
+}
+
+async function parseXlsxRows(buffer: ArrayBuffer): Promise<Record<string, unknown>[]> {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.default.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
     return [];
   }
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+
+  const headerRow = worksheet.getRow(1);
+  const columnCount = headerRow.cellCount;
+  const headers = Array.from({ length: columnCount }, (_, index) => headerRow.getCell(index + 1).text.trim());
+  const rows: Record<string, unknown>[] = [];
+
+  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const values = Object.fromEntries(
+      headers.map((header, index) => [header, row.getCell(index + 1).text.trim()]),
+    );
+    if (Object.values(values).some(Boolean)) {
+      rows.push(values);
+    }
+  }
+
+  return rows;
 }
 
 function inferKindAndColumns(rows: Record<string, unknown>[]) {
@@ -148,12 +214,10 @@ export async function parseQuickTaskFile(file: File): Promise<QuickTaskParsedFil
     rows = parseJsonRows(await file.text());
   } else if (name.endsWith(".csv") || name.endsWith(".tsv")) {
     const text = await file.text();
-    const workbook = XLSX.read(text, { type: "string" });
-    rows = parseSheetRows(workbook);
-  } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    rows = parseDelimitedRows(text, name.endsWith(".tsv") ? "\t" : ",");
+  } else if (name.endsWith(".xlsx")) {
     const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    rows = parseSheetRows(workbook);
+    rows = await parseXlsxRows(buffer);
   } else {
     throw new Error("只支持 xlsx、csv、tsv、json 文件");
   }
