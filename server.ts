@@ -16,6 +16,10 @@ const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const JWT_SECRET = process.env.JWT_SECRET || "corpusflow-dev-secret-change-in-prod";
 const JWT_EXPIRES_IN = "7d";
 let ALGORITHM_BASE = process.env.ALGORITHM_BASE_URL || "http://127.0.0.1:8001";
+const EXTRA_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 async function resolveAlgorithmBase(): Promise<string> {
   if (process.env.ALGORITHM_BASE_URL) return process.env.ALGORITHM_BASE_URL;
@@ -50,6 +54,13 @@ function ensureDataDir() {
   if (!fs.existsSync(TASKS_FILE)) {
     fs.writeFileSync(TASKS_FILE, JSON.stringify([], null, 2));
   }
+}
+
+function isAllowedOrigin(origin: string): boolean {
+  if (EXTRA_ALLOWED_ORIGINS.includes(origin)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)?corpusflow-demo\.pages\.dev$/i.test(origin)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(origin)) return true;
+  return false;
 }
 
 function readJsonFile<T>(file: string, fallback: T): T {
@@ -161,6 +172,21 @@ async function startServer() {
   ensureDataDir();
   ALGORITHM_BASE = await resolveAlgorithmBase();
   const app = express();
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && isAllowedOrigin(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    }
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    return next();
+  });
+
   app.use(express.json({ limit: "10mb" }));
 
   app.get("/api/health", async (_req, res) => {
