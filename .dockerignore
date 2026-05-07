@@ -1,8 +1,12 @@
 node_modules
 dist
+dist-server
 .git
+.env
+.env.local
 .playwright-mcp
 data
+tmp
 algorithm/.venv
 algorithm/__pycache__
 **/__pycache__
