@@ -240,19 +240,6 @@ curl http://localhost:3000/api/health
 └─────────────────────────────────────────────┘
 ```
 
-第一版部署推荐：
-
-```text
-Cloudflare Pages
-  → React/Vite 静态前端
-  → VITE_API_BASE_URL
-  → 外部 Express API
-  → 外部 FastAPI 算法服务
-  → Ark / Doubao 模型
-```
-
-这个形态优先保证演示 URL 稳定可访问；Express 和 FastAPI 暂不强行迁移到 Cloudflare Workers。
-
 ---
 
 ## 安全与健壮性
