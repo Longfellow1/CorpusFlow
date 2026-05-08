@@ -68,6 +68,7 @@ export type QuickWorkspaceState = {
     done: number;
     errors: number;
     status: "running" | "done" | "cancelled";
+    completed_items?: any[];
   } | null;
   quickCachedBatches: Array<{
     id: string;

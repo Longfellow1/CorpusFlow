@@ -301,6 +301,14 @@ export function buildQuickTaskInputText(row: QuickTaskRow): string {
   return input && input !== instruction ? input : "";
 }
 
+export function buildQuickTaskOutputText(row: QuickTaskRow): string {
+  return row.output?.trim() || "";
+}
+
+export function buildQuickTaskHistoryText(row: QuickTaskRow): string {
+  return row.history?.trim() || "";
+}
+
 export function buildQuickTaskSystemText(row: QuickTaskRow, fallbackSystem: string): string {
   return row.system?.trim() || fallbackSystem.trim();
 }

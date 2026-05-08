@@ -425,6 +425,216 @@ class GenerationFrameTests(unittest.TestCase):
             app_module.build_analysis = original_analysis
             app_module.generate_expansions = original_expansions
 
+    def test_quick_instruct_standard_sft_uses_light_path_and_preserves_uploaded_fields(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+
+        try:
+            def fail_analysis(*_args, **_kwargs):
+                raise AssertionError("standard SFT light path must not run semantic analysis")
+
+            def fail_expansions(*_args, **_kwargs):
+                raise AssertionError("standard SFT light path must not run entity expansion")
+
+            def fail_raw(**_kwargs):
+                raise AssertionError("target_per_seed=1 with uploaded output should not call the model")
+
+            app_module.build_analysis = fail_analysis
+            app_module.generate_expansions = fail_expansions
+            app_module.call_doubao_raw = fail_raw
+
+            items = quick_generate_for_seed(
+                "帮我整理这段会议讨论并提炼三个后续行动",
+                "instruct",
+                1,
+                0.93,
+                seed_system="你是通用中文对话助手，回答要自然、简洁、贴合上下文。",
+                seed_instruction="帮我整理这段会议讨论并提炼三个后续行动",
+                seed_input="团队讨论了版本冻结、演示链路验证、以及比赛前数据准备。",
+                multi_turn=True,
+                seed_output="可以，建议后续行动为：确认部署分支、完成演示自测、准备备用样例数据。",
+                seed_history='[{"role":"user","content":"这段会议内容有点散"},{"role":"assistant","content":"我可以帮你整理成行动项。"}]',
+            )
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["system"], "你是通用中文对话助手，回答要自然、简洁、贴合上下文。")
+            self.assertEqual(items[0]["instruction"], "帮我整理这段会议讨论并提炼三个后续行动")
+            self.assertEqual(items[0]["input"], "团队讨论了版本冻结、演示链路验证、以及比赛前数据准备。")
+            self.assertEqual(items[0]["output"], "可以，建议后续行动为：确认部署分支、完成演示自测、准备备用样例数据。")
+            self.assertEqual(items[0]["history"][0]["content"], "这段会议内容有点散")
+            self.assertEqual(items[0]["history"][1]["content"], "我可以帮你整理成行动项。")
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+
+    def test_quick_instruct_standard_sft_generates_only_missing_variants(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+        calls: list[dict] = []
+
+        try:
+            app_module.build_analysis = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no analysis"))
+            app_module.generate_expansions = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no expansions"))
+
+            def fake_raw(**kwargs):
+                calls.append(kwargs)
+                self.assertIn("标准 SFT", kwargs["system_prompt"])
+                return json.dumps(
+                    [
+                        {
+                            "system": "should be overridden",
+                            "instruction": "请把会议讨论整理成三条行动项",
+                            "input": "should be overridden",
+                            "output": "建议行动项包括冻结版本、验证演示链路、准备备用数据。",
+                            "history": [
+                                {"role": "user", "content": "刚才会议有点散"},
+                                {"role": "assistant", "content": "我可以帮你提炼行动项。"},
+                            ],
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+
+            app_module.call_doubao_raw = fake_raw
+
+            items = quick_generate_for_seed(
+                "帮我整理这段会议讨论并提炼三个后续行动",
+                "instruct",
+                2,
+                0.93,
+                seed_system="你是通用中文对话助手，回答要自然、简洁、贴合上下文。",
+                seed_instruction="帮我整理这段会议讨论并提炼三个后续行动",
+                seed_input="团队讨论了版本冻结、演示链路验证、以及比赛前数据准备。",
+                multi_turn=True,
+                seed_output="可以，建议后续行动为：确认部署分支、完成演示自测、准备备用样例数据。",
+                seed_history='[{"role":"user","content":"这段会议内容有点散"},{"role":"assistant","content":"我可以帮你整理成行动项。"}]',
+            )
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(items), 2)
+            self.assertEqual(items[0]["output"], "可以，建议后续行动为：确认部署分支、完成演示自测、准备备用样例数据。")
+            self.assertEqual(items[1]["system"], "你是通用中文对话助手，回答要自然、简洁、贴合上下文。")
+            self.assertEqual(items[1]["input"], "团队讨论了版本冻结、演示链路验证、以及比赛前数据准备。")
+            self.assertNotIn("车上能不能找", items[1]["history"][0]["content"])
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+
+    def test_quick_instruct_standard_sft_without_output_only_completes_output(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+
+        try:
+            app_module.build_analysis = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no analysis"))
+            app_module.generate_expansions = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no expansions"))
+            app_module.call_doubao_raw = lambda **_kwargs: json.dumps(
+                [
+                    {
+                        "output": "好的，我会按会议纪要提炼三个明确行动项。",
+                    }
+                ],
+                ensure_ascii=False,
+            )
+
+            long_input = "会议记录：" + "团队确认演示链路、版本冻结、数据准备和回滚预案。" * 12
+            items = quick_generate_for_seed(
+                "请根据会议记录整理三个后续行动",
+                "instruct",
+                1,
+                0.93,
+                seed_system="你是会议纪要助手。",
+                seed_instruction="请根据会议记录整理三个后续行动",
+                seed_input=long_input,
+            )
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["system"], "你是会议纪要助手。")
+            self.assertEqual(items[0]["instruction"], "请根据会议记录整理三个后续行动")
+            self.assertEqual(items[0]["input"], long_input)
+            self.assertEqual(items[0]["output"], "好的，我会按会议纪要提炼三个明确行动项。")
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+
+    def test_quick_instruct_standard_sft_keeps_english_samples_english(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+
+        try:
+            app_module.build_analysis = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no analysis"))
+            app_module.generate_expansions = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no expansions"))
+
+            def fake_raw(**kwargs):
+                self.assertIn('"language": "english"', kwargs["user_prompt"])
+                return json.dumps(
+                    [{"output": "The email should confirm the meeting time and list the required prep materials."}],
+                    ensure_ascii=False,
+                )
+
+            app_module.call_doubao_raw = fake_raw
+
+            items = quick_generate_for_seed(
+                "Summarize the following project update into a concise executive email.",
+                "instruct",
+                1,
+                0.93,
+                seed_instruction="Summarize the following project update into a concise executive email.",
+                seed_input="The team finalized the demo branch, verified the deployment path, and prepared backup examples.",
+            )
+
+            self.assertEqual(items[0]["instruction"], "Summarize the following project update into a concise executive email.")
+            self.assertRegex(items[0]["output"], r"email|meeting|materials")
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+
+    def test_quick_instruct_standard_sft_synthesizes_missing_history(self):
+        import src.app as app_module
+
+        original_raw = app_module.call_doubao_raw
+        original_analysis = app_module.build_analysis
+        original_expansions = app_module.generate_expansions
+
+        try:
+            app_module.build_analysis = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no analysis"))
+            app_module.generate_expansions = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no expansions"))
+            app_module.call_doubao_raw = lambda **_kwargs: (_ for _ in ()).throw(AssertionError("uploaded output should not call model"))
+
+            items = quick_generate_for_seed(
+                "想看小猪佩奇",
+                "instruct",
+                1,
+                0.93,
+                seed_instruction="想看小猪佩奇",
+                seed_input="儿童动画点播场景",
+                seed_output="好的，正在为你播放《小猪佩奇》。",
+                multi_turn=True,
+            )
+
+            history_text = items[0]["history"][0]["content"] + items[0]["history"][1]["content"]
+            self.assertRegex(history_text, "视频|小猪佩奇|片名|类型")
+            self.assertNotIn("音乐", history_text)
+        finally:
+            app_module.call_doubao_raw = original_raw
+            app_module.build_analysis = original_analysis
+            app_module.generate_expansions = original_expansions
+
     def test_quick_qa_uses_query_expansion_contract_not_reference_qa(self):
         import src.app as app_module
 

@@ -169,6 +169,8 @@ export const apiService = {
     seed_instructions?: string[];
     seed_systems?: string[];
     seed_inputs?: string[];
+    seed_outputs?: string[];
+    seed_histories?: string[];
     diversity?: number;
     generation_intent?: string;
   }, signal?: AbortSignal) {
@@ -220,6 +222,7 @@ export const apiService = {
       done: number;
       errors: number;
       status: "running" | "done" | "cancelled";
+      completed_items?: any[];
     }>(`/api/algorithm/progress/${encodeURIComponent(jobId)}`);
   },
 

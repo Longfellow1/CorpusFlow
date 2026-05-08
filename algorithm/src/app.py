@@ -1427,6 +1427,8 @@ class QuickGenerateRequest(BaseModel):
     seed_instructions: Annotated[list[str], Field(max_length=100)] | None = None
     seed_systems: Annotated[list[str], Field(max_length=100)] | None = None
     seed_inputs: Annotated[list[str], Field(max_length=100)] | None = None
+    seed_outputs: Annotated[list[str], Field(max_length=100)] | None = None
+    seed_histories: Annotated[list[Any], Field(max_length=100)] | None = None
     diversity: Annotated[int, Field(ge=1, le=10)] = 5
     generation_intent: str | None = None
 
@@ -1481,6 +1483,81 @@ def _history_is_related(history: list[dict[str, str]], current_query: str, seed_
     return bool(history[0].get("content", "").strip() and history[1].get("content", "").strip())
 
 
+def _english_ratio(text: str) -> float:
+    letters = re.findall(r"[A-Za-z]", text or "")
+    chinese = re.findall(r"[\u4e00-\u9fff]", text or "")
+    total = len(letters) + len(chinese)
+    if total == 0:
+        return 0.0
+    return len(letters) / total
+
+
+def _parse_seed_history(seed_history: Any) -> list[dict[str, str]]:
+    if seed_history is None:
+        return []
+    raw_history: Any = seed_history
+    if isinstance(seed_history, str):
+        text = seed_history.strip()
+        if not text:
+            return []
+        try:
+            raw_history = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(raw_history, dict):
+        raw_history = raw_history.get("history") or raw_history.get("messages") or raw_history.get("conversations") or []
+    if not isinstance(raw_history, list):
+        return []
+
+    normalized: list[dict[str, str]] = []
+    for turn in raw_history:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or turn.get("from") or "").strip().lower()
+        content = str(turn.get("content") or turn.get("value") or "").strip()
+        if not content:
+            continue
+        normalized_role = "assistant" if role in {"assistant", "gpt", "ai"} else "user"
+        normalized.append({"role": normalized_role, "content": content})
+        if len(normalized) >= 2:
+            break
+    if len(normalized) < 2:
+        return []
+    if normalized[0]["role"] != "user" or normalized[1]["role"] != "assistant":
+        normalized = [
+            {"role": "user", "content": normalized[0]["content"]},
+            {"role": "assistant", "content": normalized[1]["content"]},
+        ]
+    return normalized
+
+
+def should_use_sft_light_path(
+    *,
+    gen_type: str,
+    seed_text: str,
+    seed_instruction: str | None = None,
+    seed_system: str | None = None,
+    seed_input: str | None = None,
+    seed_output: str | None = None,
+    seed_history: Any = None,
+    multi_turn: bool = False,
+) -> bool:
+    if gen_type != "instruct":
+        return False
+    instruction = (seed_instruction or seed_text or "").strip()
+    input_text = (seed_input or "").strip()
+    output = (seed_output or "").strip()
+    has_history = bool(_parse_seed_history(seed_history))
+    has_standard_payload = bool(instruction and (input_text or output or has_history))
+    text_for_detection = f"{instruction}\n{input_text}\n{output}"
+    return (
+        has_standard_payload
+        or len(instruction + input_text) > 300
+        or (_english_ratio(text_for_detection) >= 0.55 and len(text_for_detection) >= 40)
+        or (multi_turn and has_history)
+    )
+
+
 def _normalize_weak_gate_text(text: str) -> str:
     return re.sub(r"[\s，。！？、,.!?;；:：\"'“”‘’（）()\[\]【】<>《》-]+", "", str(text or "").lower())
 
@@ -1517,6 +1594,183 @@ def _synthesize_related_history(current_query: str, response: str = "", seed_tex
     ]
 
 
+def _attach_instruct_history(
+    item: dict[str, Any],
+    history: list[dict[str, str]],
+    multi_turn: bool,
+    seed_text: str,
+) -> dict[str, Any]:
+    if not multi_turn:
+        return item
+    instruction = str(item.get("instruction", "")).strip()
+    output = str(item.get("output", "")).strip()
+    normalized_history = history if _history_is_related(history, instruction, seed_text) else []
+    if not normalized_history:
+        normalized_history = _synthesize_related_history(instruction, output, seed_text)
+    return {
+        **item,
+        "history": normalized_history,
+        "currentQuery": instruction,
+        "response": output,
+        "conversations": [
+            {"from": "human", "value": normalized_history[0]["content"]},
+            {"from": "gpt", "value": normalized_history[1]["content"]},
+            {"from": "human", "value": instruction},
+            {"from": "gpt", "value": output},
+        ],
+    }
+
+
+def _normalize_sft_light_item(
+    raw_item: dict[str, Any],
+    *,
+    base_system: str,
+    base_instruction: str,
+    base_input: str,
+    fallback_output: str,
+    fallback_history: list[dict[str, str]],
+    multi_turn: bool,
+    seed_text: str,
+    preserve_system_and_input: bool = True,
+) -> dict[str, Any] | None:
+    instruction = str(raw_item.get("instruction") or raw_item.get("currentQuery") or base_instruction).strip()
+    output = str(raw_item.get("output") or raw_item.get("response") or fallback_output).strip()
+    if not instruction or not output:
+        return None
+    item = {
+        "system": base_system if preserve_system_and_input else str(raw_item.get("system", base_system)).strip(),
+        "instruction": instruction,
+        "input": base_input if preserve_system_and_input else str(raw_item.get("input", base_input)).strip(),
+        "output": output,
+    }
+    model_history = _parse_seed_history(raw_item.get("history"))
+    return _attach_instruct_history(
+        item,
+        model_history or fallback_history,
+        multi_turn,
+        seed_text,
+    )
+
+
+def quick_generate_sft_light_for_seed(
+    seed_text: str,
+    target_count: int,
+    dedup_threshold: float,
+    instruction_template: str | None = None,
+    seed_instruction: str | None = None,
+    seed_system: str | None = None,
+    seed_input: str | None = None,
+    seed_output: str | None = None,
+    seed_history: Any = None,
+    multi_turn: bool = False,
+    diversity: int = 5,
+    generation_intent: str | None = None,
+) -> list[dict]:
+    instruction = (seed_instruction or seed_text).strip()
+    system = (seed_system or instruction_template or "").strip()
+    input_text = (seed_input or "").strip()
+    output = (seed_output or "").strip()
+    uploaded_history = _parse_seed_history(seed_history)
+
+    fields_for_safety = [seed_text, instruction, system, input_text, output]
+    for field in fields_for_safety:
+        is_safe, reason = check_content_safety(field)
+        if not is_safe:
+            raise HTTPException(status_code=422, detail=reason)
+
+    items: list[dict] = []
+    if output:
+        items.append(
+            _attach_instruct_history(
+                {
+                    "system": system,
+                    "instruction": instruction,
+                    "input": input_text,
+                    "output": output,
+                },
+                uploaded_history,
+                multi_turn,
+                seed_text,
+            )
+        )
+
+    missing = max(0, target_count - len(items))
+    if missing <= 0:
+        return items[:target_count]
+
+    diversity = max(1, min(diversity, 10))
+    mode_requirement = "保留原始字段，只补全 output。" if not output else "基于已有 output 做轻量增强或变体，不要从零重写任务。"
+    history_requirement = (
+        "如果需要 history，沿用上传 history；只有在缺失时才生成同一场景的上一轮 1Q1A。"
+        if multi_turn else
+        "不要输出 history。"
+    )
+    prompt_context = {
+        "path": "SftLightGeneratePath",
+        "target_count": missing,
+        "language": "english" if _english_ratio(f"{instruction}\n{input_text}\n{output}") >= 0.55 else "auto",
+        "seed": {
+            "system": system,
+            "instruction": instruction,
+            "input": input_text,
+            "output": output,
+            "history": uploaded_history,
+        },
+        "generation_intent": (generation_intent or "").strip(),
+        "requirements": [
+            "这是标准 SFT 轻量通道，跳过语义分析、实体扩展和 paraphrase。",
+            "每条必须输出 system、instruction、input、output。",
+            "system 必须与 seed.system 完全一致。",
+            "input 必须与 seed.input 完全一致。",
+            mode_requirement,
+            history_requirement,
+            "不要改变中英文语种；英文样本保持英文。",
+            "输出合法 JSON 数组，不要 markdown，不要解释。",
+        ],
+    }
+    history_schema = ', "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]' if multi_turn else ""
+    raw = call_doubao_raw(
+        system_prompt=(
+            "你是 CorpusFlow 的标准 SFT 轻量生成器。"
+            "你只处理已结构化的 system/instruction/input/output 字段，不做 query 扩写链路。"
+            f"输出格式："
+            f"[{{\"system\":\"\",\"instruction\":\"\",\"input\":\"\",\"output\":\"\"{history_schema}}}]。"
+        ),
+        user_prompt=json.dumps(prompt_context, ensure_ascii=False),
+        temperature=min(0.38 + diversity * 0.025, 0.72),
+        max_tokens=3600,
+    )
+
+    json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    json_str = json_match.group(1).strip() if json_match else raw.strip()
+    parsed = json.loads(json_str)
+    if isinstance(parsed, dict):
+        parsed = parsed.get("items", [])
+    if not isinstance(parsed, list):
+        raise ValueError(f"LLM 返回格式不是列表: {type(parsed)}")
+
+    for raw_item in parsed:
+        if not isinstance(raw_item, dict):
+            continue
+        normalized = _normalize_sft_light_item(
+            raw_item,
+            base_system=system,
+            base_instruction=instruction,
+            base_input=input_text,
+            fallback_output=output,
+            fallback_history=uploaded_history,
+            multi_turn=multi_turn,
+            seed_text=seed_text,
+        )
+        if normalized and all(
+            check_content_safety(str(normalized.get(field, "")))[0]
+            for field in ("system", "instruction", "input", "output")
+        ):
+            items.append(normalized)
+
+    return _dedup_quick_items(items, "instruct", dedup_threshold, "")[:target_count]
+
+
 def quick_generate_for_seed(
     seed_text: str,
     gen_type: str,
@@ -1526,6 +1780,8 @@ def quick_generate_for_seed(
     seed_instruction: str | None = None,
     seed_system: str | None = None,
     seed_input: str | None = None,
+    seed_output: str | None = None,
+    seed_history: Any = None,
     multi_turn: bool = False,
     diversity: int = 5,
     generation_intent: str | None = None,
@@ -1545,6 +1801,31 @@ def quick_generate_for_seed(
         raise HTTPException(
             status_code=422,
             detail="指令微调模式必须提供 instruction，不能留空",
+        )
+
+    if should_use_sft_light_path(
+        gen_type=gen_type,
+        seed_text=seed_text,
+        seed_instruction=seed_instruction,
+        seed_system=seed_system,
+        seed_input=seed_input,
+        seed_output=seed_output,
+        seed_history=seed_history,
+        multi_turn=multi_turn,
+    ):
+        return quick_generate_sft_light_for_seed(
+            seed_text,
+            target_count,
+            dedup_threshold,
+            instruction_template,
+            seed_instruction,
+            seed_system,
+            seed_input,
+            seed_output,
+            seed_history,
+            multi_turn,
+            diversity,
+            generation_intent,
         )
 
     # 五元组分析 + 实体泛化（仅 qa/instruct，容错处理）
@@ -1750,7 +2031,10 @@ def _quick_item_dedup_key(item: dict, gen_type: str) -> str:
             return str(first.get("value", ""))
         return ""
     if gen_type == "instruct":
-        return str(item.get("instruction", "") or item.get("input", ""))
+        return "\n".join(
+            str(item.get(field, "")).strip()
+            for field in ("system", "instruction", "input", "output")
+        )
     return str(item.get("q", ""))
 
 
@@ -1783,6 +2067,8 @@ def generate_quick_seed_to_target(
     seed_instruction: str | None = None,
     seed_system: str | None = None,
     seed_input: str | None = None,
+    seed_output: str | None = None,
+    seed_history: Any = None,
     multi_turn: bool = False,
     diversity: int = 5,
     generation_intent: str | None = None,
@@ -1803,6 +2089,8 @@ def generate_quick_seed_to_target(
             seed_instruction,
             seed_system,
             seed_input,
+            seed_output,
+            seed_history,
             multi_turn,
             diversity,
             generation_intent,
@@ -1824,6 +2112,8 @@ def quick_generate(request: QuickGenerateRequest):
     seed_instructions = request.seed_instructions or []
     seed_systems = request.seed_systems or []
     seed_inputs = request.seed_inputs or []
+    seed_outputs = request.seed_outputs or []
+    seed_histories = request.seed_histories or []
     shared_system_prompt = request.system_prompt or request.instruction_template
     has_instruction_for_each_seed = request.type != "instruct" or all(
         ((seed_instructions[index] if index < len(seed_instructions) else "") or seed).strip()
@@ -1845,6 +2135,7 @@ def quick_generate(request: QuickGenerateRequest):
             "done": 0,
             "errors": 0,
             "status": "running",
+            "completed_items": [],
         }
 
     threshold_map = {"loose": 0.88, "medium": 0.93, "strict": 0.97}
@@ -1868,6 +2159,8 @@ def quick_generate(request: QuickGenerateRequest):
             seed_instruction = seed_instructions[idx] if idx < len(seed_instructions) else None
             seed_system = seed_systems[idx] if idx < len(seed_systems) else None
             seed_input = seed_inputs[idx] if idx < len(seed_inputs) else None
+            seed_output = seed_outputs[idx] if idx < len(seed_outputs) else None
+            seed_history = seed_histories[idx] if idx < len(seed_histories) else None
             result = generate_quick_seed_to_target(
                 seed,
                 request.type,
@@ -1877,11 +2170,16 @@ def quick_generate(request: QuickGenerateRequest):
                 seed_instruction,
                 seed_system,
                 seed_input,
+                seed_output,
+                seed_history,
                 request.multi_turn,
                 request.diversity,
                 request.generation_intent,
             )
-            return idx, [dict(item, seed_index=idx) for item in result]
+            return idx, [
+                dict(item, id=f"{job_id}-{idx}-{item_index}", seed_index=idx)
+                for item_index, item in enumerate(result)
+            ]
         except Exception as e:
             logging.error("quick_generate seed[%d] failed: %s", idx, e)
             return idx, None
@@ -1929,6 +2227,8 @@ def quick_generate(request: QuickGenerateRequest):
                         _progress_store[job_id]["done"] += 1
                         if items is None:
                             _progress_store[job_id]["errors"] += 1
+                        else:
+                            _progress_store[job_id]["completed_items"].extend(items)
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 

@@ -39,7 +39,9 @@ import { analyzeSentence, expandSeedFields, generateParaphrases, generateQA, gen
 import { apiService } from "./services/apiService";
 import {
   buildQuickTaskInstructionText,
+  buildQuickTaskHistoryText,
   buildQuickTaskInputText,
+  buildQuickTaskOutputText,
   buildQuickTaskSeedText,
   buildQuickTaskSystemText,
   parseQuickTaskFile,
@@ -1146,6 +1148,8 @@ export default function App() {
         instruction: buildQuickTaskInstructionText(row),
         system: buildQuickTaskSystemText(row, quickInstructionTemplate),
         input: buildQuickTaskInputText(row),
+        output: buildQuickTaskOutputText(row),
+        history: buildQuickTaskHistoryText(row),
         rejection: detectRejectionRisk(buildQuickTaskSeedText(row, quickTaskKind).trim()),
       }))
       .filter((entry) => entry.text && !entry.rejection.blocked);
@@ -1211,8 +1215,27 @@ export default function App() {
         void apiService.getQuickGenerateProgress(jobId)
           .then((progress) => {
             if (quickGenerationRunRef.current !== runId) return;
-            updateQuickWorkspace({
-              quickRunProgress: progress,
+            const completedItems = progress.completed_items?.length
+              ? normalizeQuickGeneratedItems(
+                progress.completed_items,
+                quickOutputKind,
+                quickMultiTurnEnabled,
+                pendingSeedEntries.map((entry) => entry.index),
+              )
+              : [];
+            updateQuickWorkspace((prev) => {
+              if (completedItems.length === 0) {
+                return { quickRunProgress: progress };
+              }
+              const seenIds = new Set(prev.quickGeneratedItems.map((item) => item.id));
+              const mergedItems = [
+                ...prev.quickGeneratedItems,
+                ...completedItems.filter((item) => !seenIds.has(item.id)),
+              ];
+              return {
+                quickRunProgress: progress,
+                quickGeneratedItems: mergedItems,
+              };
             });
           })
           .catch(() => {
@@ -1240,6 +1263,12 @@ export default function App() {
           : undefined,
         seed_inputs: quickOutputKind === "instruct"
           ? pendingSeedEntries.map((entry) => entry.input)
+          : undefined,
+        seed_outputs: quickOutputKind === "instruct"
+          ? pendingSeedEntries.map((entry) => entry.output)
+          : undefined,
+        seed_histories: quickOutputKind === "instruct"
+          ? pendingSeedEntries.map((entry) => entry.history)
           : undefined,
       }, abortController.signal);
 
