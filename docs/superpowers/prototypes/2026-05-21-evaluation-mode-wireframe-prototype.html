@@ -1,0 +1,2865 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CorpusFlow 复赛评测模式三段式原型</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      --bg: #12121a;
+      --rail: #1a1a27;
+      --panel: #1e1e2d;
+      --panel-2: #161621;
+      --panel-3: #0f0f16;
+      --line: #1f2937;
+      --line-strong: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --faint: #64748b;
+      --emerald: #34d399;
+      --emerald-strong: #059669;
+      --emerald-soft: rgba(16, 185, 129, 0.1);
+      --indigo: #818cf8;
+      --indigo-soft: rgba(99, 102, 241, 0.14);
+      --amber: #fbbf24;
+      --amber-soft: rgba(245, 158, 11, 0.12);
+      --rose: #fb7185;
+      --rose-soft: rgba(244, 63, 94, 0.12);
+      --sky: #38bdf8;
+      --sky-soft: rgba(56, 189, 248, 0.12);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: default;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
+      margin: 0;
+    }
+
+    .app {
+      min-height: 100vh;
+      background: var(--bg);
+      padding-bottom: 28px;
+    }
+
+    .top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 48px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(26, 26, 39, 0.96);
+      padding: 0 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 900;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: #4f46e5;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .crumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--faint);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .save-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(15, 15, 22, 0.72);
+      padding: 0 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .save-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--emerald);
+      box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.12);
+    }
+
+    .page {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 16px 24px 0;
+    }
+
+    .hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 22px;
+      margin-bottom: 16px;
+    }
+
+    .eyebrow {
+      color: var(--emerald);
+      font-size: 11px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    h1 {
+      margin-top: 8px;
+      font-size: 28px;
+      line-height: 1.18;
+    }
+
+    .hero p {
+      max-width: 820px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .tag,
+    .mini-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .tag {
+      min-height: 25px;
+      border: 1px solid var(--line-strong);
+      background: rgba(15, 23, 42, 0.55);
+      padding: 4px 9px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .tag.emerald {
+      border-color: rgba(52, 211, 153, 0.3);
+      background: var(--emerald-soft);
+      color: var(--emerald);
+    }
+
+    .tag.indigo {
+      border-color: rgba(129, 140, 248, 0.3);
+      background: var(--indigo-soft);
+      color: var(--indigo);
+    }
+
+    .tag.amber {
+      border-color: rgba(251, 191, 36, 0.28);
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .tag.rose {
+      border-color: rgba(251, 113, 133, 0.28);
+      background: var(--rose-soft);
+      color: var(--rose);
+    }
+
+    .tag.sky {
+      border-color: rgba(56, 189, 248, 0.28);
+      background: var(--sky-soft);
+      color: var(--sky);
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    .shell {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-3);
+      box-shadow: var(--shadow);
+    }
+
+    .workspace-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 58px;
+      border-bottom: 1px solid var(--line);
+      background: var(--rail);
+      padding: 0 18px;
+    }
+
+    .task-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .task-title strong {
+      font-size: 15px;
+    }
+
+    .task-title span:last-child {
+      color: var(--faint);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .run-hud {
+      display: grid;
+      grid-template-columns: minmax(520px, 1fr) auto;
+      gap: 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(22, 22, 33, 0.82);
+      padding: 14px 18px;
+    }
+
+    .progress-card {
+      border: 1px solid rgba(52, 211, 153, 0.18);
+      border-radius: var(--radius);
+      background: rgba(16, 185, 129, 0.05);
+      padding: 12px;
+    }
+
+    .progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .progress-head strong {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .progress-head span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .progress-track {
+      overflow: hidden;
+      height: 8px;
+      border-radius: 999px;
+      background: #0f172a;
+    }
+
+    .progress-fill {
+      position: relative;
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--emerald);
+    }
+
+    .progress-fill::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      width: 64%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+      animation: scan 1.35s ease-in-out infinite;
+    }
+
+    @keyframes scan {
+      from { transform: translateX(-130%); }
+      to { transform: translateX(240%); }
+    }
+
+    .progress-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.44);
+      padding: 7px 8px;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .progress-step.done {
+      border-color: rgba(52, 211, 153, 0.25);
+      color: var(--emerald);
+    }
+
+    .progress-step.active {
+      border-color: rgba(251, 191, 36, 0.28);
+      color: var(--amber);
+    }
+
+    .step-mark {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      background: rgba(148, 163, 184, 0.1);
+      color: currentColor;
+      font-size: 10px;
+      font-weight: 950;
+    }
+
+    .run-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      align-content: start;
+      gap: 8px;
+      width: 330px;
+    }
+
+    .primary-btn,
+    .secondary-btn,
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      font-weight: 900;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .primary-btn {
+      min-height: 42px;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      background: var(--emerald-strong);
+      color: #fff;
+      font-size: 13px;
+      box-shadow: 0 12px 26px rgba(5, 150, 105, 0.2);
+    }
+
+    .secondary-btn {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      background: rgba(15, 23, 42, 0.58);
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .secondary-btn.disabled {
+      opacity: 0.46;
+      color: var(--faint);
+    }
+
+    .export-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .stage-grid {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      min-height: 820px;
+    }
+
+    .stage {
+      border-right: 1px solid var(--line);
+      background: var(--rail);
+    }
+
+    .stage:nth-child(2) {
+      background: var(--panel-3);
+    }
+
+    .stage:last-child {
+      border-right: none;
+      background: var(--rail);
+    }
+
+    .stage-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 70px;
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+    }
+
+    .stage-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .stage-icon {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: rgba(52, 211, 153, 0.1);
+      color: var(--emerald);
+      font-size: 14px;
+      font-weight: 950;
+    }
+
+    .stage-icon.wide {
+      width: 42px;
+    }
+
+    .stage-title h2 {
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .stage-title p {
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .stage-body {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .main-body {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .main-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 12px 14px;
+    }
+
+    .main-top h2 {
+      font-size: 15px;
+    }
+
+    .main-top p {
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .map-card {
+      display: grid;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 12px;
+    }
+
+    .map-card:not([open]) {
+      gap: 0;
+    }
+
+    .map-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      list-style: none;
+      cursor: default;
+    }
+
+    .map-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .map-head,
+    .map-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .map-head {
+      justify-content: flex-end;
+    }
+
+    .map-title strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 13px;
+    }
+
+    .map-title span,
+    .map-foot span {
+      display: block;
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .map-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 7px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(15, 15, 22, 0.46);
+      padding: 3px 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .legend-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .legend-c01 { color: var(--amber); }
+    .legend-c02 { color: var(--sky); }
+    .legend-c03 { color: var(--rose); }
+    .legend-c04 { color: var(--indigo); }
+
+    .vector-map {
+      position: relative;
+      overflow: hidden;
+      min-height: 218px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background:
+        linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+        #101420;
+      background-size: 44px 44px;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .vector-map.dragging {
+      cursor: grabbing;
+    }
+
+    .map-axis {
+      position: absolute;
+      z-index: 2;
+      color: rgba(148, 163, 184, 0.58);
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .map-axis.x {
+      right: 12px;
+      bottom: 9px;
+    }
+
+    .map-axis.y {
+      left: 10px;
+      top: 12px;
+      writing-mode: vertical-rl;
+    }
+
+    .map-world {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      transform: translate3d(0, 0, 0) scale(1);
+      transform-origin: center center;
+      will-change: transform;
+    }
+
+    .map-controls {
+      position: absolute;
+      left: 12px;
+      bottom: 10px;
+      z-index: 7;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.72);
+      padding: 6px;
+    }
+
+    .map-control {
+      display: grid;
+      place-items: center;
+      min-width: 28px;
+      height: 26px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.62);
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .map-control[data-map-action="reset"] {
+      min-width: 42px;
+    }
+
+    .map-scale {
+      min-width: 42px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .heat-spot {
+      position: absolute;
+      z-index: 1;
+      left: var(--x);
+      top: var(--y);
+      width: var(--size, 132px);
+      height: var(--size, 132px);
+      border-radius: 999px;
+      background: radial-gradient(circle, color-mix(in srgb, currentColor 34%, transparent) 0%, color-mix(in srgb, currentColor 14%, transparent) 38%, transparent 72%);
+      filter: blur(1px);
+      opacity: 0.86;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .heat-c01 { color: var(--amber); }
+    .heat-c02 { color: var(--sky); }
+    .heat-c03 { color: var(--rose); }
+    .heat-c04 { color: var(--indigo); }
+
+    .case-dot {
+      position: absolute;
+      z-index: 3;
+      left: var(--x);
+      top: var(--y);
+      width: 7px;
+      height: 7px;
+      border: 1px solid rgba(248, 250, 252, 0.72);
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+      transform: translate(-50%, -50%);
+    }
+
+    .case-dot.hot {
+      width: 10px;
+      height: 10px;
+      border-width: 2px;
+      box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 20%, transparent), 0 0 18px color-mix(in srgb, currentColor 58%, transparent);
+    }
+
+    .case-dot.c01 { color: var(--amber); }
+    .case-dot.c02 { color: var(--sky); }
+    .case-dot.c03 { color: var(--rose); }
+    .case-dot.c04 { color: var(--indigo); }
+
+    .case-dot:hover,
+    .case-dot:focus-visible {
+      z-index: 6;
+      outline: none;
+    }
+
+    .case-popover {
+      position: absolute;
+      z-index: 8;
+      width: 190px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: #111827;
+      padding: 8px 9px;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 1.45;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease;
+    }
+
+    .case-popover.visible {
+      opacity: 1;
+    }
+
+    .map-callout {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      z-index: 4;
+      max-width: 250px;
+      border: 1px solid rgba(52, 211, 153, 0.18);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.74);
+      padding: 9px 10px;
+      color: #cbd5e1;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .map-callout strong {
+      display: block;
+      color: var(--emerald);
+      font-size: 12px;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .production-card {
+      background: var(--panel-2);
+    }
+
+    .production-card .card-title {
+      margin-bottom: 12px;
+    }
+
+    .production-card .stage-title {
+      gap: 8px;
+    }
+
+    .production-card .stage-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      font-size: 13px;
+    }
+
+    .inline-progress {
+      min-width: 310px;
+      border: 1px solid rgba(52, 211, 153, 0.18);
+      border-radius: 10px;
+      background: rgba(16, 185, 129, 0.05);
+      padding: 9px 10px;
+    }
+
+    .inline-progress .progress-track {
+      margin-top: 7px;
+      height: 6px;
+    }
+
+    .inline-progress span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 14px;
+    }
+
+    .card.production-card {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      outline: none;
+    }
+
+    .card.panel {
+      background: var(--panel);
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 11px;
+      color: #e2e8f0;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .drop-zone {
+      display: grid;
+      place-items: center;
+      min-height: 150px;
+      border: 2px dashed rgba(52, 211, 153, 0.28);
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.05);
+      text-align: center;
+      padding: 18px;
+    }
+
+    .drop-zone strong {
+      display: block;
+      margin-top: 10px;
+      font-size: 15px;
+    }
+
+    .drop-zone span {
+      display: block;
+      margin-top: 6px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .upload-icon {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      background: rgba(52, 211, 153, 0.1);
+      color: var(--emerald);
+      font-size: 23px;
+      font-weight: 950;
+    }
+
+    .file-card {
+      display: flex;
+      align-items: start;
+      gap: 12px;
+      border: 1px solid rgba(52, 211, 153, 0.18);
+      border-radius: var(--radius);
+      background: rgba(16, 185, 129, 0.05);
+      padding: 12px;
+    }
+
+    .file-icon {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(52, 211, 153, 0.1);
+      color: var(--emerald);
+      font-size: 14px;
+      font-weight: 950;
+    }
+
+    .file-card strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .file-card span {
+      display: block;
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(15, 15, 22, 0.5);
+      padding: 10px;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 5px;
+      color: #fff;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .field-list,
+    .asset-list,
+    .quality-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .field-row,
+    .quality-row,
+    .asset-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.44);
+      padding: 7px 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .field-row strong,
+    .quality-row strong,
+    .asset-row strong {
+      color: #e2e8f0;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .cluster-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .cluster-page {
+      display: grid;
+      gap: 10px;
+    }
+
+    .cluster-page[hidden] {
+      display: none;
+    }
+
+    .compact-root-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .compact-root {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 10px;
+    }
+
+    .compact-root strong {
+      color: #f8fafc;
+      font-size: 12px;
+    }
+
+    .compact-root span {
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .cluster-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .cluster-toolbar,
+    .cluster-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.42);
+      padding: 10px 12px;
+    }
+
+    .cluster-toolbar strong,
+    .cluster-pagination strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 12px;
+    }
+
+    .cluster-toolbar span,
+    .cluster-pagination span {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pager button {
+      min-height: 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.54);
+      color: #cbd5e1;
+      padding: 0 9px;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .pager button.active {
+      border-color: rgba(52, 211, 153, 0.3);
+      background: var(--emerald-soft);
+      color: var(--emerald);
+    }
+
+    .pager button:disabled {
+      opacity: 0.42;
+    }
+
+    .cluster {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 12px;
+    }
+
+    .cluster-id,
+    .rec-id {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 30px;
+      border-radius: 9px;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .cluster-id {
+      background: var(--indigo-soft);
+      color: var(--indigo);
+    }
+
+    .cluster h3,
+    .rec-card h3 {
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .cluster p,
+    .rec-card p {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .root {
+      margin-top: 8px;
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .root b {
+      color: var(--emerald);
+    }
+
+    .cluster-meta {
+      display: grid;
+      gap: 6px;
+      justify-items: end;
+    }
+
+    .cluster-decision {
+      grid-column: 2 / -1;
+      display: grid;
+      gap: 8px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    .decision-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.42);
+      padding: 9px;
+    }
+
+    .decision-row.rejected {
+      opacity: 0.7;
+      border-style: dashed;
+    }
+
+    .decision-row strong {
+      display: block;
+      color: #e2e8f0;
+      font-size: 12px;
+    }
+
+    .decision-row span {
+      display: block;
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .decision-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .case-link {
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .case-link:hover {
+      border-color: currentColor;
+      background: rgba(248, 250, 252, 0.08);
+    }
+
+    .decision-actions button,
+    .decision-actions a {
+      width: 30px;
+      min-height: 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.5);
+      color: #cbd5e1;
+      padding: 0;
+      font-size: 14px;
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .decision-actions button.accept,
+    .decision-actions a.accept {
+      border-color: rgba(52, 211, 153, 0.28);
+      background: var(--emerald-soft);
+      color: var(--emerald);
+    }
+
+    .decision-actions .reject {
+      border-color: rgba(251, 113, 133, 0.28);
+      background: var(--rose-soft);
+      color: var(--rose);
+    }
+
+    .decision-actions .edit {
+      border-color: rgba(129, 140, 248, 0.26);
+      background: var(--indigo-soft);
+      color: var(--indigo);
+    }
+
+    .plan-table {
+      display: grid;
+      gap: 8px;
+    }
+
+    .plan-row {
+      display: grid;
+      grid-template-columns: 1.15fr 86px 92px 1.2fr;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.42);
+      padding: 9px 10px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .plan-row.header {
+      min-height: 28px;
+      border-color: transparent;
+      background: transparent;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .task-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .task-number {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(15, 15, 22, 0.5);
+      padding: 14px;
+    }
+
+    .task-number span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .task-number strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 34px;
+      line-height: 1;
+      color: #fff;
+    }
+
+    .task-status {
+      display: grid;
+      gap: 9px;
+      margin-top: 12px;
+      border: 1px solid rgba(52, 211, 153, 0.18);
+      border-radius: 10px;
+      background: rgba(16, 185, 129, 0.05);
+      padding: 10px;
+    }
+
+    .task-status-head,
+    .result-action-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .task-status-head strong {
+      color: #e2e8f0;
+      font-size: 12px;
+    }
+
+    .task-status-head span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .modal-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      background: rgba(2, 6, 23, 0.62);
+    }
+
+    .modal-layer:target,
+    .modal-layer.is-open {
+      display: block;
+    }
+
+    body.modal-open {
+      overflow: hidden;
+    }
+
+    .modal-scrim {
+      position: absolute;
+      inset: 0;
+    }
+
+    .drawer,
+    .dialog-card {
+      position: absolute;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .drawer {
+      top: 0;
+      right: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      width: min(560px, 100vw);
+      height: 100%;
+      border-right: none;
+    }
+
+    .drawer-head,
+    .dialog-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+      padding: 16px;
+    }
+
+    .drawer-head h3,
+    .dialog-head h3 {
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .drawer-head p,
+    .dialog-head p {
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .close-btn {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: rgba(15, 23, 42, 0.58);
+      color: #cbd5e1;
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .drawer-body,
+    .dialog-body {
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .drawer-stats,
+    .dialog-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .drawer-stat,
+    .dialog-stat {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.44);
+      padding: 9px;
+    }
+
+    .drawer-stat span,
+    .dialog-stat span {
+      display: block;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .drawer-stat strong,
+    .dialog-stat strong {
+      display: block;
+      margin-top: 4px;
+      color: #f8fafc;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .case-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .case-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.44);
+      padding: 10px;
+    }
+
+    .case-item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+
+    .case-item-head strong {
+      color: #f8fafc;
+      font-size: 12px;
+    }
+
+    .case-item p {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .case-item em {
+      display: block;
+      margin-top: 7px;
+      color: #cbd5e1;
+      font-size: 11px;
+      font-style: normal;
+      line-height: 1.5;
+    }
+
+    .dialog-card {
+      left: 50%;
+      top: 50%;
+      width: min(520px, calc(100vw - 32px));
+      border-radius: 14px;
+      transform: translate(-50%, -50%);
+      overflow: hidden;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .sample-table {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .sample-row {
+      display: grid;
+      grid-template-columns: 70px minmax(0, 1fr);
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.44);
+      padding: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .chat {
+      display: grid;
+      gap: 10px;
+    }
+
+    .bubble {
+      max-width: 92%;
+      border-radius: 14px;
+      padding: 10px 11px;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .bubble.agent {
+      justify-self: start;
+      border: 1px solid var(--line);
+      background: rgba(15, 15, 22, 0.58);
+      color: #cbd5e1;
+    }
+
+    .bubble.user {
+      justify-self: end;
+      border: 1px solid rgba(52, 211, 153, 0.26);
+      background: rgba(16, 185, 129, 0.1);
+      color: #d1fae5;
+    }
+
+    .copilot-pin {
+      display: grid;
+      gap: 8px;
+      border: 1px solid rgba(129, 140, 248, 0.24);
+      border-radius: var(--radius);
+      background: rgba(99, 102, 241, 0.08);
+      padding: 12px;
+    }
+
+    .pin-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pin-row strong {
+      color: #e2e8f0;
+      text-align: right;
+    }
+
+    .proposal-card {
+      display: grid;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 12px;
+    }
+
+    .proposal-card h3 {
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .proposal-card p {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .proposal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.2fr;
+      gap: 7px;
+    }
+
+    .proposal-actions button {
+      min-height: 30px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: rgba(15, 23, 42, 0.5);
+      color: #cbd5e1;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .proposal-actions button:first-child {
+      border-color: rgba(52, 211, 153, 0.28);
+      background: var(--emerald-soft);
+      color: var(--emerald);
+    }
+
+    .composer {
+      position: sticky;
+      bottom: 0;
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 10px;
+    }
+
+    .composer textarea {
+      width: 100%;
+      min-height: 68px;
+      resize: none;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.62);
+      color: #e2e8f0;
+      outline: none;
+      padding: 9px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .composer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .strategy-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .field input,
+    .field textarea {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.58);
+      color: #e2e8f0;
+      outline: none;
+      padding: 9px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .field textarea {
+      min-height: 74px;
+      resize: none;
+    }
+
+    .rec-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .rec-card {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 12px;
+    }
+
+    .rec-id {
+      background: var(--emerald-soft);
+      color: var(--emerald);
+    }
+
+    .mini-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .mini-tag {
+      min-height: 22px;
+      border: 1px solid var(--line-strong);
+      background: rgba(15, 15, 22, 0.42);
+      padding: 3px 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .asset-tree {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #0b1020;
+      padding: 12px;
+      color: #dbeafe;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .file-eval { color: #93c5fd; }
+    .file-train { color: #86efac; }
+    .file-meta { color: #fde68a; }
+
+    .switcher {
+      display: flex;
+      gap: 8px;
+      width: max-content;
+      margin: 18px auto 0;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(15, 15, 22, 0.82);
+      padding: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .switch-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 116px;
+      min-height: 36px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 950;
+      text-decoration: none;
+    }
+
+    .switch-link.active {
+      background: #f8fafc;
+      color: #0f172a;
+    }
+
+    .wire-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .wire-card,
+    .ppt-frame {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .wire-card {
+      min-height: 360px;
+      overflow: hidden;
+    }
+
+    .wire-head {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .wire-body {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .wire-box {
+      min-height: 60px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: rgba(15, 15, 22, 0.55);
+    }
+
+    .ppt-frame {
+      width: min(1240px, 100%);
+      aspect-ratio: 16 / 9;
+      margin: 0 auto;
+      padding: 34px;
+      overflow: hidden;
+    }
+
+    .ppt-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 24px;
+    }
+
+    .ppt-title h2 {
+      max-width: 760px;
+      font-size: 34px;
+      line-height: 1.13;
+    }
+
+    .ppt-title p {
+      max-width: 360px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .ppt-flow {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 1.08fr;
+      gap: 16px;
+      height: calc(100% - 112px);
+    }
+
+    .ppt-panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .big-number {
+      margin-top: 12px;
+      font-size: 50px;
+      font-weight: 950;
+      line-height: 1;
+    }
+
+    .ppt-stack {
+      display: grid;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .ppt-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(15, 15, 22, 0.55);
+      padding: 10px;
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1180px) {
+      .run-hud,
+      .stage-grid,
+      .wire-grid,
+      .ppt-flow {
+        grid-template-columns: 1fr;
+      }
+
+      .stage {
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .production-card {
+        position: static;
+      }
+
+      .run-actions {
+        width: 100%;
+      }
+
+      .ppt-frame {
+        height: auto;
+        aspect-ratio: auto;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 16px 14px 0;
+      }
+
+      .top-nav,
+      .hero,
+      .workspace-top,
+      .progress-head,
+      .ppt-title {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .task-title {
+        flex-wrap: wrap;
+      }
+
+      .task-title strong {
+        overflow-wrap: anywhere;
+      }
+
+      .task-title span:last-child {
+        flex-basis: 100%;
+      }
+
+      .switcher {
+        width: 100%;
+      }
+
+      .switch-link {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .progress-steps,
+      .stat-grid,
+      .preview-grid,
+      .proposal-actions,
+      .plan-row {
+        grid-template-columns: 1fr;
+      }
+
+      .cluster {
+        grid-template-columns: 1fr;
+      }
+
+      .cluster-meta {
+        justify-items: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="top-nav">
+      <div class="brand">
+        <span class="logo">CF</span>
+        <span>CorpusFlow</span>
+        <span class="crumb">首页 / 评测增强</span>
+      </div>
+      <div class="nav-actions">
+        <span class="save-pill"><span class="save-dot"></span> 已保存 08:21</span>
+        <span class="tag emerald">服务正常</span>
+      </div>
+    </header>
+
+    <div class="page">
+      <section id="prototype" class="view">
+        <div class="shell">
+          <div class="workspace-top">
+            <div class="task-title">
+              <span class="tag emerald">当前任务</span>
+              <strong>vehicle_agent_badcases_finals.csv</strong>
+              <span>42 行 · 31 个明确失败 · 4 类问题结构</span>
+            </div>
+            <div class="nav-actions">
+              <span class="tag emerald" data-status-summary>3 已采纳 / 1 已拒绝</span>
+            </div>
+          </div>
+
+          <div class="stage-grid">
+            <section class="stage">
+              <div class="stage-head">
+                <div class="stage-title">
+                  <span class="stage-icon">1</span>
+                  <div>
+                    <h2>操作区</h2>
+                  </div>
+                </div>
+                <span class="tag emerald">Ready</span>
+              </div>
+              <div class="stage-body">
+                <div class="drop-zone">
+                  <div>
+                    <span class="upload-icon">↑</span>
+                    <strong>复赛样例已导入</strong>
+                    <span>CSV / XLSX / JSON 进入统一 Evidence Case。</span>
+                  </div>
+                </div>
+
+                <div class="file-card">
+                  <span class="file-icon">CSV</span>
+                  <div>
+                    <strong>vehicle_agent_badcases_finals.csv</strong>
+                    <span>有效 39 / 42 行 · 明确失败 31 · 拒识 3</span>
+                  </div>
+                </div>
+
+                <div class="copilot-pin">
+                  <div class="card-title" style="margin-bottom:0;">
+                    <span>方案调整指令</span>
+                    <span class="tag indigo">引用 C01</span>
+                  </div>
+                  <div class="pin-row"><span>目标</span><strong>评测优先，训练辅助</strong></div>
+                  <div class="pin-row"><span>策略</span><strong>C01/C02 P0，C03 P1</strong></div>
+                  <div class="composer">
+                    <textarea placeholder="补充业务背景、调整聚类、修改生成配比...">把 C01 的 eval case 增加“绕行时间”字段，先预览 3 条。</textarea>
+                    <div class="composer-row">
+                      <span class="tag">应用到：生产方案</span>
+                      <button class="secondary-btn" style="min-width:86px;">发送</button>
+                    </div>
+                  </div>
+                </div>
+
+                <a class="primary-btn" href="#sample-preview">▶ 生成预览样例</a>
+                <a class="secondary-btn" href="#asset-confirm">确认生成资产包</a>
+                <div class="card production-card">
+                  <div class="card-title">
+                    <div class="stage-title">
+                      <span class="stage-icon">3</span>
+                      <span>数据生产任务</span>
+                    </div>
+                  </div>
+                  <div class="task-summary">
+                    <div class="task-number"><span>回归评测</span><strong data-task-total="eval">56</strong></div>
+                    <div class="task-number"><span>训练候选</span><strong data-task-total="train">84</strong></div>
+                  </div>
+                  <div class="task-status">
+                    <div class="task-status-head">
+                      <strong>预览样例生成中</strong>
+                      <span>6 / 9 · 68%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill"></div></div>
+                    <div class="result-action-row">
+                      <span class="tag">6 条可验收</span>
+                      <a class="secondary-btn" href="#sample-preview" style="min-width:92px;">查看</a>
+                    </div>
+                  </div>
+                  <div class="quality-list" style="margin-top:10px;">
+                    <div class="quality-row"><span>附加</span><strong>negative / report / provenance</strong></div>
+                    <div class="quality-row"><span>下载</span><strong>确认后开放</strong></div>
+                  </div>
+                </div>
+                <div class="export-row">
+                  <button class="secondary-btn disabled">JSONL</button>
+                  <button class="secondary-btn disabled">JSON</button>
+                  <button class="secondary-btn disabled">CSV</button>
+                </div>
+
+                <div class="stat-grid">
+                  <div class="stat"><span>原始记录</span><strong>42</strong></div>
+                  <div class="stat"><span>候选 case</span><strong>39</strong></div>
+                  <div class="stat"><span>明确失败</span><strong>31</strong></div>
+                  <div class="stat"><span>安全拒识</span><strong>3</strong></div>
+                </div>
+
+                <div class="card">
+                  <div class="card-title">
+                    <span>字段识别</span>
+                    <span class="tag indigo">91%</span>
+                  </div>
+                  <div class="field-list">
+                    <div class="field-row"><span>用户问题</span><strong>query</strong></div>
+                    <div class="field-row"><span>期望行为</span><strong>expected</strong></div>
+                    <div class="field-row"><span>实际回答</span><strong>actual</strong></div>
+                    <div class="field-row"><span>失败备注</span><strong>note</strong></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="stage">
+              <div class="stage-head">
+                <div class="stage-title">
+                  <span class="stage-icon">2</span>
+                  <div>
+                    <h2>根因诊断</h2>
+                  </div>
+                </div>
+              </div>
+              <div class="main-body">
+                <div class="main-top">
+                  <div>
+                    <h2>2. 根因诊断</h2>
+                  </div>
+                  <div class="status-strip">
+                    <span class="tag emerald" data-status-count="accepted">3 已采纳</span>
+                    <span class="tag rose" data-status-count="rejected">1 已拒绝</span>
+                  </div>
+                </div>
+
+                <details class="map-card" open>
+                  <summary class="map-summary">
+                    <div class="map-title">
+                      <strong>Badcase 分布</strong>
+                      <span>31 个明确失败 · C01/C02 为主要密集区</span>
+                    </div>
+                    <span class="tag indigo">31 badcases · 4 clusters</span>
+                  </summary>
+                  <div class="map-head">
+                    <div class="map-legend" aria-label="cluster legend">
+                      <span class="legend-item legend-c01"><i class="legend-dot"></i>C01 复合约束</span>
+                      <span class="legend-item legend-c02"><i class="legend-dot"></i>C02 多轮承接</span>
+                      <span class="legend-item legend-c03"><i class="legend-dot"></i>C03 工具边界</span>
+                      <span class="legend-item legend-c04"><i class="legend-dot"></i>C04 已拒绝</span>
+                    </div>
+                  </div>
+                  <div class="vector-map" role="img" aria-label="bad case embedding map with density heatmap and clusters">
+                    <span class="map-axis y">semantic distance</span>
+                    <span class="map-axis x">constraint complexity</span>
+                    <div class="map-controls" aria-label="map controls">
+                      <button class="map-control" type="button" data-map-action="zoom-out" title="缩小">−</button>
+                      <span class="map-scale">100%</span>
+                      <button class="map-control" type="button" data-map-action="zoom-in" title="放大">+</button>
+                      <button class="map-control" type="button" data-map-action="reset" title="复位">复位</button>
+                    </div>
+                    <div class="case-popover" aria-hidden="true"></div>
+                    <div class="map-world">
+                      <span class="heat-spot heat-c01" style="--x:28%; --y:40%; --size:170px;"></span>
+                      <span class="heat-spot heat-c02" style="--x:60%; --y:34%; --size:152px;"></span>
+                      <span class="heat-spot heat-c03" style="--x:43%; --y:69%; --size:140px;"></span>
+                      <span class="heat-spot heat-c04" style="--x:79%; --y:64%; --size:124px;"></span>
+                      <span class="case-dot c01 hot" style="--x:24%; --y:36%;" title="C01: 顺路 + 评分 + 不下高速"></span>
+                      <span class="case-dot c01" style="--x:29%; --y:32%;" title="C01: 绕行成本遗漏"></span>
+                      <span class="case-dot c01" style="--x:21%; --y:43%;" title="C01: 多约束排序错误"></span>
+                      <span class="case-dot c01 hot" style="--x:32%; --y:42%;" title="C01: 约束命中缺失"></span>
+                      <span class="case-dot c01" style="--x:35%; --y:35%;" title="C01: POI 过滤不稳定"></span>
+                      <span class="case-dot c01" style="--x:27%; --y:49%;" title="C01: 评分优先级错误"></span>
+                      <span class="case-dot c01" style="--x:18%; --y:37%;" title="C01: 路线偏好遗漏"></span>
+                      <span class="case-dot c01" style="--x:37%; --y:47%;" title="C01: 组合约束冲突"></span>
+                      <span class="case-dot c01" style="--x:24%; --y:28%;" title="C01: 不下高速约束遗漏"></span>
+                      <span class="case-dot c01" style="--x:31%; --y:53%;" title="C01: 目的地附近偏移"></span>
+                      <span class="case-dot c01" style="--x:39%; --y:39%;" title="C01: 低置信候选误选"></span>
+                      <span class="case-dot c01" style="--x:20%; --y:52%;" title="C01: 复杂条件压缩失败"></span>
+                      <span class="case-dot c02 hot" style="--x:58%; --y:30%;" title="C02: 上一轮目的地丢失"></span>
+                      <span class="case-dot c02" style="--x:64%; --y:27%;" title="C02: 用户偏好未继承"></span>
+                      <span class="case-dot c02" style="--x:55%; --y:37%;" title="C02: 车辆状态遗漏"></span>
+                      <span class="case-dot c02 hot" style="--x:61%; --y:39%;" title="C02: current query 覆盖 history"></span>
+                      <span class="case-dot c02" style="--x:68%; --y:34%;" title="C02: 多轮指代错误"></span>
+                      <span class="case-dot c02" style="--x:51%; --y:26%;" title="C02: 续问承接失败"></span>
+                      <span class="case-dot c02" style="--x:66%; --y:44%;" title="C02: 上下文切换错误"></span>
+                      <span class="case-dot c02" style="--x:57%; --y:22%;" title="C02: 约束历史未写入"></span>
+                      <span class="case-dot c03 hot" style="--x:42%; --y:67%;" title="C03: 应调用工具但直接回答"></span>
+                      <span class="case-dot c03" style="--x:47%; --y:72%;" title="C03: 落域错误"></span>
+                      <span class="case-dot c03" style="--x:36%; --y:70%;" title="C03: 拒答边界不稳"></span>
+                      <span class="case-dot c03" style="--x:51%; --y:63%;" title="C03: 工具触发缺样本"></span>
+                      <span class="case-dot c03" style="--x:39%; --y:79%;" title="C03: 能力边界误判"></span>
+                      <span class="case-dot c03" style="--x:45%; --y:59%;" title="C03: 泛化回答绕过工具"></span>
+                      <span class="case-dot c04" style="--x:76%; --y:58%;" title="C04: 弱答，已拒绝生成"></span>
+                      <span class="case-dot c04" style="--x:82%; --y:63%;" title="C04: 标注粒度不足"></span>
+                      <span class="case-dot c04" style="--x:73%; --y:69%;" title="C04: 空泛回答"></span>
+                      <span class="case-dot c04" style="--x:86%; --y:55%;" title="C04: 需要人工确认"></span>
+                      <span class="case-dot c04" style="--x:79%; --y:72%;" title="C04: 暂不进入生成"></span>
+                    </div>
+                  <div class="map-callout">
+                      <strong>高密度区域优先修复</strong>
+                      C01/C02 覆盖 20 个明确失败，对应 76 条候选资产。
+                    </div>
+                  </div>
+                </details>
+
+                <div class="result-grid">
+                  <div class="cluster-stack">
+                    <div class="cluster-toolbar">
+                      <strong>根因聚合</strong>
+                    </div>
+                    <div class="cluster-page" data-root-panel="1">
+                    <div class="cluster-list">
+                    <article class="cluster" data-cluster="c01" data-status="accepted" data-eval="32" data-train="0">
+                      <span class="cluster-id">C01</span>
+                      <div>
+                        <h3>复合约束遗漏</h3>
+                        <p>遗漏顺路、评分、不下高速、绕行成本等组合约束。</p>
+                        <div class="root"><b>根因：</b>多约束 POI 决策覆盖不足。</div>
+                      </div>
+                      <div class="cluster-meta">
+                        <a class="tag amber case-link" href="#cases-c01">12 cases ›</a>
+                        <span class="tag emerald" data-status-tag>已采纳</span>
+                      </div>
+                      <div class="cluster-decision">
+                        <div class="decision-row">
+                          <div>
+                            <strong>生成多约束回归评测 32 条</strong>
+                            <span>影响：eval_cases.jsonl +32；字段增加绕行时间和约束命中。</span>
+                          </div>
+                          <div class="decision-actions">
+                            <button class="accept" type="button" data-root-action="accept" data-root-id="c01" aria-label="采纳 C01" title="采纳">✓</button>
+                            <button class="reject" type="button" data-root-action="reject" data-root-id="c01" aria-label="拒绝 C01" title="拒绝">×</button>
+                            <a class="edit" href="#decision-c01-edit" aria-label="编辑 C01" title="编辑">✎</a>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article class="cluster" data-cluster="c02" data-status="accepted" data-eval="0" data-train="44">
+                      <span class="cluster-id">C02</span>
+                      <div>
+                        <h3>多轮上下文承接失败</h3>
+                        <p>没有继承上一轮目的地、车辆状态或用户偏好。</p>
+                        <div class="root"><b>根因：</b>缺 history + current query 长上下文样本。</div>
+                      </div>
+                      <div class="cluster-meta">
+                        <a class="tag sky case-link" href="#cases-c02">8 cases ›</a>
+                        <span class="tag emerald" data-status-tag>已采纳</span>
+                      </div>
+                      <div class="cluster-decision">
+                        <div class="decision-row">
+                          <div>
+                            <strong>生成多轮训练候选 44 条</strong>
+                            <span>影响：training_candidates.jsonl +44；ShareGPT history 结构。</span>
+                          </div>
+                          <div class="decision-actions">
+                            <button class="accept" type="button" data-root-action="accept" data-root-id="c02" aria-label="采纳 C02" title="采纳">✓</button>
+                            <button class="reject" type="button" data-root-action="reject" data-root-id="c02" aria-label="拒绝 C02" title="拒绝">×</button>
+                            <a class="edit" href="#decision-c02-edit" aria-label="编辑 C02" title="编辑">✎</a>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article class="cluster" data-cluster="c03" data-status="accepted" data-eval="0" data-train="0">
+                      <span class="cluster-id">C03</span>
+                      <div>
+                        <h3>落域 / 工具选择错误</h3>
+                        <p>应调用工具时直接泛化回答。</p>
+                        <div class="root"><b>根因：</b>工具触发边界和拒答边界弱。</div>
+                      </div>
+                      <div class="cluster-meta">
+                        <a class="tag rose case-link" href="#cases-c03">6 cases ›</a>
+                        <span class="tag emerald" data-status-tag>已采纳</span>
+                      </div>
+                      <div class="cluster-decision">
+                        <div class="decision-row">
+                          <div>
+                            <strong>沉淀工具边界负例 20 条</strong>
+                            <span>影响：附加 negative_cases.jsonl；不作为主交付数字。</span>
+                          </div>
+                          <div class="decision-actions">
+                            <button class="accept" type="button" data-root-action="accept" data-root-id="c03" aria-label="采纳 C03" title="采纳">✓</button>
+                            <button class="reject" type="button" data-root-action="reject" data-root-id="c03" aria-label="拒绝 C03" title="拒绝">×</button>
+                            <a class="edit" href="#decision-c03-edit" aria-label="编辑 C03" title="编辑">✎</a>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article class="cluster" data-cluster="c04" data-status="rejected" data-eval="0" data-train="0">
+                      <span class="cluster-id">C04</span>
+                      <div>
+                        <h3>弱答或空泛回答</h3>
+                        <p>回答缺少可执行步骤和依据。</p>
+                        <div class="root"><b>根因：</b>expected behavior 标注粒度偏粗。</div>
+                      </div>
+                      <div class="cluster-meta">
+                        <a class="tag case-link" href="#cases-c04">5 cases ›</a>
+                        <span class="tag rose" data-status-tag>已拒绝</span>
+                      </div>
+                      <div class="cluster-decision">
+                        <div class="decision-row rejected">
+                          <div>
+                            <strong>本轮不进入生成，仅进入人工确认报告</strong>
+                            <span>已拒绝但保留记录。影响：quality_report.json 标记 silver review。</span>
+                          </div>
+                          <div class="decision-actions">
+                            <a class="accept" href="#decision-c04-restore" aria-label="恢复采纳 C04" title="恢复采纳">↺</a>
+                            <a href="#decision-c04-impact" aria-label="查看 C04 影响" title="查看影响">i</a>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                    <div class="cluster-pagination">
+                      <div>
+                        <strong>默认 20 个根因 / 页</strong>
+                        <span class="cluster-page-note">1-20 / 27</span>
+                      </div>
+                      <div class="pager" aria-label="root cause pagination bottom">
+                        <button type="button" data-root-page="prev" disabled>上一页</button>
+                        <button type="button" class="active" data-root-page="1">1</button>
+                        <button type="button" data-root-page="2">2</button>
+                        <button type="button" data-root-page="next">下一页</button>
+                      </div>
+                    </div>
+                    </div>
+                  </div>
+                  <div class="cluster-page" data-root-panel="2" hidden>
+                    <div class="compact-root-list">
+                      <div class="compact-root"><span class="cluster-id">C21</span><div><strong>字段别名不稳定</strong><span>3 cases · query / user_query 混用导致解析置信度下降。</span></div><span class="tag">P2</span></div>
+                      <div class="compact-root"><span class="cluster-id">C22</span><div><strong>期望行为缺失</strong><span>2 cases · expected 为空，进入人工补标队列。</span></div><span class="tag">review</span></div>
+                      <div class="compact-root"><span class="cluster-id">C23</span><div><strong>安全拒识边界</strong><span>2 cases · 拒识合理但需要沉淀报告。</span></div><span class="tag rose">reject</span></div>
+                      <div class="compact-root"><span class="cluster-id">C24</span><div><strong>短句样本过密</strong><span>1 case · 低优先级，不进入本轮生成。</span></div><span class="tag">P3</span></div>
+                      <div class="compact-root"><span class="cluster-id">C25</span><div><strong>系统角色冲突</strong><span>1 case · system 与 query 中身份设定冲突。</span></div><span class="tag">P3</span></div>
+                      <div class="compact-root"><span class="cluster-id">C26</span><div><strong>时间字段缺省</strong><span>1 case · 缺少发生时间，不影响主链路。</span></div><span class="tag">P3</span></div>
+                      <div class="compact-root"><span class="cluster-id">C27</span><div><strong>重复证据</strong><span>1 case · 与 C01 高度重复，建议合并。</span></div><span class="tag emerald">merge</span></div>
+                    </div>
+                  </div>
+                  </div>
+
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="cases-c01" class="modal-layer" aria-label="C01 cases drawer">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <aside class="drawer">
+          <div class="drawer-head">
+            <div>
+              <h3>C01 复合约束遗漏</h3>
+              <p>12 个 bad case，集中在顺路、评分、不下高速、绕行成本的组合约束。</p>
+            </div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="drawer-body">
+            <div class="drawer-stats">
+              <div class="drawer-stat"><span>case</span><strong>12</strong></div>
+              <div class="drawer-stat"><span>优先级</span><strong>P0</strong></div>
+              <div class="drawer-stat"><span>产出</span><strong>+32</strong></div>
+            </div>
+            <div class="case-list">
+              <div class="case-item">
+                <div class="case-item-head"><strong>#03 顺路 + 评分 + 不下高速</strong><span class="tag amber">high</span></div>
+                <p>用户要求沿途评分高且不下高速，实际推荐了绕行 28 分钟的低分 POI。</p>
+                <em>期望：同时保留路线约束、评分阈值和绕行成本字段。</em>
+              </div>
+              <div class="case-item">
+                <div class="case-item-head"><strong>#07 绕行成本遗漏</strong><span class="tag amber">high</span></div>
+                <p>模型只解释“附近有充电站”，没有比较绕行距离与当前电量。</p>
+                <em>期望：生成 eval case 时加入 detour_minutes 与 battery_margin。</em>
+              </div>
+              <div class="case-item">
+                <div class="case-item-head"><strong>#11 组合条件压缩失败</strong><span class="tag">medium</span></div>
+                <p>多个约束被压缩成单一地点偏好，导致路线和服务时间冲突。</p>
+                <em>期望：拆成 constraint_hits 数组并校验全部命中。</em>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="cases-c02" class="modal-layer" aria-label="C02 cases drawer">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <aside class="drawer">
+          <div class="drawer-head">
+            <div>
+              <h3>C02 多轮上下文承接失败</h3>
+              <p>8 个 bad case，集中在上一轮目的地、车辆状态和用户偏好的承接。</p>
+            </div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="drawer-body">
+            <div class="drawer-stats">
+              <div class="drawer-stat"><span>case</span><strong>8</strong></div>
+              <div class="drawer-stat"><span>优先级</span><strong>P0</strong></div>
+              <div class="drawer-stat"><span>产出</span><strong>+44</strong></div>
+            </div>
+            <div class="case-list">
+              <div class="case-item">
+                <div class="case-item-head"><strong>#14 上一轮目的地丢失</strong><span class="tag sky">high</span></div>
+                <p>用户追问“那附近有没有快充”，模型没有继承上一轮目的地。</p>
+                <em>期望：ShareGPT history 中保留 location_slot 与 current_query。</em>
+              </div>
+              <div class="case-item">
+                <div class="case-item-head"><strong>#18 用户偏好未继承</strong><span class="tag sky">medium</span></div>
+                <p>上一轮已声明“不去商场”，后续推荐仍返回商场停车场。</p>
+                <em>期望：生成多轮训练候选时加入 preference_memory。</em>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="cases-c03" class="modal-layer" aria-label="C03 cases drawer">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <aside class="drawer">
+          <div class="drawer-head">
+            <div>
+              <h3>C03 落域 / 工具选择错误</h3>
+              <p>6 个 bad case，集中在应调用工具时直接泛化回答。</p>
+            </div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="drawer-body">
+            <div class="drawer-stats">
+              <div class="drawer-stat"><span>case</span><strong>6</strong></div>
+              <div class="drawer-stat"><span>优先级</span><strong>P1</strong></div>
+              <div class="drawer-stat"><span>产出</span><strong>+20</strong></div>
+            </div>
+            <div class="case-list">
+              <div class="case-item">
+                <div class="case-item-head"><strong>#22 工具触发缺失</strong><span class="tag rose">high</span></div>
+                <p>用户要求“查实时空位”，模型直接给静态建议，没有触发停车工具。</p>
+                <em>期望：沉淀 tool_required=true 的负例与拒答边界。</em>
+              </div>
+              <div class="case-item">
+                <div class="case-item-head"><strong>#25 能力边界误判</strong><span class="tag rose">medium</span></div>
+                <p>模型声称已经完成查询，但证据中没有任何工具调用记录。</p>
+                <em>期望：输出 negative_cases.jsonl，训练模型先确认工具可用性。</em>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="cases-c04" class="modal-layer" aria-label="C04 cases drawer">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <aside class="drawer">
+          <div class="drawer-head">
+            <div>
+              <h3>C04 弱答或空泛回答</h3>
+              <p>5 个 bad case，本轮标记为拒绝生成，保留给人工确认报告。</p>
+            </div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="drawer-body">
+            <div class="drawer-stats">
+              <div class="drawer-stat"><span>case</span><strong>5</strong></div>
+              <div class="drawer-stat"><span>状态</span><strong>拒绝</strong></div>
+              <div class="drawer-stat"><span>产出</span><strong>report</strong></div>
+            </div>
+            <div class="case-list">
+              <div class="case-item">
+                <div class="case-item-head"><strong>#29 标注粒度不足</strong><span class="tag rose">review</span></div>
+                <p>失败备注只有“回答空泛”，缺少可判定的期望行为。</p>
+                <em>影响：不进入生成，写入 quality_report 的 silver review。</em>
+              </div>
+              <div class="case-item">
+                <div class="case-item-head"><strong>#31 需要业务确认</strong><span class="tag rose">review</span></div>
+                <p>期望输出依赖业务策略，当前证据不足以自动补数据。</p>
+                <em>影响：保留在 rejected_cases.json，允许后续恢复采纳。</em>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="decision-c01-edit" class="modal-layer" aria-label="edit c01">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <div class="dialog-card">
+          <div class="dialog-head">
+            <div><h3>编辑 C01 生产策略</h3><p>只改解法抽象和生成参数，不改原始证据。</p></div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="dialog-body">
+            <div class="sample-table">
+              <div class="sample-row"><strong>解法</strong><span>多约束 POI 决策评测：约束命中、绕行成本、排序依据。</span></div>
+              <div class="sample-row"><strong>产物</strong><span>eval_cases.jsonl · schema: constraint_hits, detour_minutes, expected_tool。</span></div>
+              <div class="sample-row"><strong>数量</strong><span>32 条，预览 3 条后再生成资产包。</span></div>
+            </div>
+            <div class="dialog-actions"><a class="secondary-btn" href="#prototype">取消</a><a class="primary-btn" href="#prototype">应用修改</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="decision-c02-edit" class="modal-layer" aria-label="edit c02">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <div class="dialog-card">
+          <div class="dialog-head">
+            <div><h3>编辑 C02 训练策略</h3><p>从承接失败抽象多轮样本，不手写对话全文。</p></div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="dialog-body">
+            <div class="sample-table">
+              <div class="sample-row"><strong>解法</strong><span>多轮上下文训练：history 继承、current query 改写、偏好记忆。</span></div>
+              <div class="sample-row"><strong>产物</strong><span>training_candidates.jsonl · ShareGPT history 结构。</span></div>
+              <div class="sample-row"><strong>数量</strong><span>44 条，预览 2 条后进入资产包。</span></div>
+            </div>
+            <div class="dialog-actions"><a class="secondary-btn" href="#prototype">取消</a><a class="primary-btn" href="#prototype">应用修改</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="decision-c03-edit" class="modal-layer" aria-label="edit c03">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <div class="dialog-card">
+          <div class="dialog-head">
+            <div><h3>编辑 C03 负例策略</h3><p>从工具误用抽象边界样本，控制是否进入主数字。</p></div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="dialog-body">
+            <div class="sample-table">
+              <div class="sample-row"><strong>解法</strong><span>工具边界负例：tool_required、expected_tool、refusal_boundary。</span></div>
+              <div class="sample-row"><strong>产物</strong><span>negative_cases.jsonl + quality_report.json。</span></div>
+              <div class="sample-row"><strong>数量</strong><span>20 条，不计入回归评测主交付。</span></div>
+            </div>
+            <div class="dialog-actions"><a class="secondary-btn" href="#prototype">取消</a><a class="primary-btn" href="#prototype">应用修改</a></div>
+          </div>
+        </div>
+      </section>
+      <section id="decision-c04-restore" class="modal-layer"><a class="modal-scrim" href="#prototype"></a><div class="dialog-card"><div class="dialog-head"><div><h3>恢复采纳 C04</h3><p>恢复后不会直接生成主资产，会先进入人工复核队列。</p></div><a class="close-btn" href="#prototype">×</a></div><div class="dialog-body"><div class="dialog-actions"><a class="secondary-btn" href="#cases-c04">查看 cases</a><a class="primary-btn" href="#prototype">恢复采纳</a></div></div></div></section>
+      <section id="decision-c04-impact" class="modal-layer"><a class="modal-scrim" href="#prototype"></a><div class="dialog-card"><div class="dialog-head"><div><h3>C04 拒绝影响</h3><p>不进入 eval/training 主数字，只进入 rejected_cases 和 quality_report。</p></div><a class="close-btn" href="#prototype">×</a></div><div class="dialog-body"><div class="dialog-grid"><div class="dialog-stat"><span>主产出</span><strong>0</strong></div><div class="dialog-stat"><span>报告</span><strong>+5</strong></div><div class="dialog-stat"><span>状态</span><strong>保留</strong></div></div><div class="dialog-actions"><a class="primary-btn" href="#prototype">知道了</a></div></div></div></section>
+
+      <section id="sample-preview" class="modal-layer" aria-label="sample preview">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <div class="dialog-card">
+          <div class="dialog-head">
+            <div><h3>预览样例</h3><p>生成资产包前先看 6 条样例，确认字段和语义方向。</p></div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="dialog-body">
+            <div class="sample-table">
+              <div class="sample-row"><strong>eval #01</strong><span>query 包含顺路、评分、不下高速；expected 校验 detour_minutes 和 constraint_hits。</span></div>
+              <div class="sample-row"><strong>eval #02</strong><span>工具边界场景：实时空位必须触发 parking_search。</span></div>
+              <div class="sample-row"><strong>train #01</strong><span>上一轮目的地写入 history，当前轮追问继承偏好。</span></div>
+            </div>
+            <div class="dialog-actions"><a class="secondary-btn" href="#prototype">继续调整</a><a class="primary-btn" href="#asset-confirm">确认生成</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="asset-confirm" class="modal-layer" aria-label="asset confirm">
+        <a class="modal-scrim" href="#prototype" aria-label="关闭"></a>
+        <div class="dialog-card">
+          <div class="dialog-head">
+            <div><h3>确认生成资产包</h3><p>将当前采纳状态固化为可下载数据资产。</p></div>
+            <a class="close-btn" href="#prototype" aria-label="关闭">×</a>
+          </div>
+          <div class="dialog-body">
+            <div class="dialog-grid">
+              <div class="dialog-stat"><span>eval</span><strong>56</strong></div>
+              <div class="dialog-stat"><span>train</span><strong>84</strong></div>
+              <div class="dialog-stat"><span>report</span><strong>4</strong></div>
+            </div>
+            <p class="root"><b>资产：</b>eval_cases.jsonl、training_candidates.jsonl、negative_cases.jsonl、quality_report.json、provenance.json。</p>
+            <div class="dialog-actions"><a class="secondary-btn" href="#prototype">取消</a><a class="primary-btn" href="#prototype">生成资产包</a></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="wireframes" class="view">
+        <div class="wire-grid">
+          <article class="wire-card">
+            <div class="wire-head"><span>01</span><span>上传 + 解析</span></div>
+            <div class="wire-body">
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+            </div>
+          </article>
+          <article class="wire-card">
+            <div class="wire-head"><span>02</span><span>聚类根因 + 人工确认</span></div>
+            <div class="wire-body">
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+            </div>
+          </article>
+          <article class="wire-card">
+            <div class="wire-head"><span>03</span><span>数据生产任务</span></div>
+            <div class="wire-body">
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+              <div class="wire-box"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="ppt" class="view">
+        <div class="ppt-frame">
+          <div class="ppt-title">
+            <h2>从失败证据到下一轮训练与回归评测数据资产</h2>
+            <p>左侧统一发起操作，右侧沉淀根因、采纳状态和生产结果，最后确认生成可追溯资产。</p>
+          </div>
+          <div class="ppt-flow">
+            <div class="ppt-panel">
+              <h3>上传 + 解析</h3>
+              <div class="big-number" style="color: var(--emerald);">42</div>
+              <div class="ppt-stack">
+                <div class="ppt-item">31 个明确失败</div>
+                <div class="ppt-item">字段识别成功率 91%</div>
+                <div class="ppt-item">证据完整度 82%</div>
+              </div>
+            </div>
+            <div class="ppt-panel">
+              <h3>根因诊断 + 人工确认</h3>
+              <div class="big-number" style="color: var(--indigo);">4</div>
+              <div class="ppt-stack">
+                <div class="ppt-item">C01 复合约束遗漏 -> R01 多约束评测</div>
+                <div class="ppt-item">C02 上下文承接失败 -> R02 多轮训练</div>
+                <div class="ppt-item">方案调整指令写入生产策略，采纳状态影响下游任务</div>
+              </div>
+            </div>
+            <div class="ppt-panel">
+              <h3>确认交付</h3>
+              <div class="big-number" style="color: var(--amber);">140</div>
+              <div class="ppt-stack">
+                <div class="ppt-item"><strong>56</strong> eval_cases.jsonl</div>
+                <div class="ppt-item"><strong>84</strong> training_candidates.jsonl</div>
+                <div class="ppt-item">quality_report.json + provenance.json</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <nav class="switcher" aria-label="Prototype views">
+        <a class="switch-link" href="?view=prototype">主原型</a>
+        <a class="switch-link" href="?view=wireframes">线框图</a>
+        <a class="switch-link" href="?view=ppt">PPT 截图</a>
+      </nav>
+    </div>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get("view") || "prototype";
+    const allowed = new Set(["prototype", "wireframes", "ppt"]);
+    const active = allowed.has(view) ? view : "prototype";
+
+    document.querySelectorAll(".view").forEach((node) => {
+      node.classList.toggle("active", node.id === active);
+    });
+
+    document.querySelectorAll(".switch-link").forEach((node) => {
+      const url = new URL(node.href);
+      node.classList.toggle("active", url.searchParams.get("view") === active);
+    });
+
+    const modalLayers = Array.from(document.querySelectorAll(".modal-layer"));
+    let modalScrollY = 0;
+
+    function openModal(id) {
+      const target = document.getElementById(id);
+      if (!target || !target.classList.contains("modal-layer")) return false;
+      modalScrollY = window.scrollY;
+      modalLayers.forEach((layer) => layer.classList.remove("is-open"));
+      target.classList.add("is-open");
+      document.body.classList.add("modal-open");
+      return true;
+    }
+
+    function closeModals() {
+      modalLayers.forEach((layer) => layer.classList.remove("is-open"));
+      document.body.classList.remove("modal-open");
+      window.scrollTo(0, modalScrollY);
+    }
+
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest("a[href^='#']");
+      if (!link) return;
+      const id = link.getAttribute("href").slice(1);
+      const target = document.getElementById(id);
+      if (target?.classList.contains("modal-layer")) {
+        event.preventDefault();
+        openModal(id);
+        return;
+      }
+      if (link.closest(".modal-layer")) {
+        event.preventDefault();
+        closeModals();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && document.body.classList.contains("modal-open")) {
+        closeModals();
+      }
+    });
+
+    const vectorMap = document.querySelector(".vector-map");
+    const mapWorld = document.querySelector(".map-world");
+    const mapScale = document.querySelector(".map-scale");
+    const casePopover = document.querySelector(".case-popover");
+    let activeDot = null;
+    const mapState = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, baseX: 0, baseY: 0 };
+
+    function applyMapTransform() {
+      if (!mapWorld) return;
+      mapWorld.style.transform = `translate3d(${mapState.x}px, ${mapState.y}px, 0) scale(${mapState.scale})`;
+      if (mapScale) mapScale.textContent = `${Math.round(mapState.scale * 100)}%`;
+      if (activeDot) positionCasePopover(activeDot);
+    }
+
+    function positionCasePopover(dot) {
+      if (!vectorMap || !casePopover) return;
+      const tip = dot.dataset.tip;
+      if (!tip) return;
+      const mapRect = vectorMap.getBoundingClientRect();
+      const dotRect = dot.getBoundingClientRect();
+      const rawLeft = dotRect.left - mapRect.left + 12;
+      const rawTop = dotRect.top - mapRect.top - 54;
+      const left = Math.min(Math.max(10, rawLeft), mapRect.width - 204);
+      const top = Math.min(Math.max(10, rawTop), mapRect.height - 58);
+      casePopover.textContent = tip;
+      casePopover.style.left = `${left}px`;
+      casePopover.style.top = `${top}px`;
+      casePopover.classList.add("visible");
+      casePopover.setAttribute("aria-hidden", "false");
+    }
+
+    function hideCasePopover() {
+      activeDot = null;
+      if (!casePopover) return;
+      casePopover.classList.remove("visible");
+      casePopover.setAttribute("aria-hidden", "true");
+    }
+
+    function zoomMap(delta, originX = 0, originY = 0) {
+      const next = Math.min(2.8, Math.max(0.65, mapState.scale + delta));
+      if (next === mapState.scale) return;
+      const ratio = next / mapState.scale;
+      mapState.x = originX - (originX - mapState.x) * ratio;
+      mapState.y = originY - (originY - mapState.y) * ratio;
+      mapState.scale = next;
+      applyMapTransform();
+    }
+
+    document.querySelectorAll("[data-map-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.mapAction;
+        if (action === "zoom-in") zoomMap(0.25);
+        if (action === "zoom-out") zoomMap(-0.25);
+        if (action === "reset") {
+          mapState.scale = 1;
+          mapState.x = 0;
+          mapState.y = 0;
+          applyMapTransform();
+        }
+      });
+    });
+
+    if (vectorMap) {
+      vectorMap.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        const rect = vectorMap.getBoundingClientRect();
+        zoomMap(event.deltaY < 0 ? 0.14 : -0.14, event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
+      }, { passive: false });
+
+      vectorMap.addEventListener("pointerdown", (event) => {
+        if (event.target.closest(".map-control")) return;
+        mapState.dragging = true;
+        mapState.startX = event.clientX;
+        mapState.startY = event.clientY;
+        mapState.baseX = mapState.x;
+        mapState.baseY = mapState.y;
+        vectorMap.classList.add("dragging");
+        vectorMap.setPointerCapture(event.pointerId);
+      });
+
+      vectorMap.addEventListener("pointermove", (event) => {
+        if (!mapState.dragging) return;
+        hideCasePopover();
+        mapState.x = mapState.baseX + event.clientX - mapState.startX;
+        mapState.y = mapState.baseY + event.clientY - mapState.startY;
+        applyMapTransform();
+      });
+
+      vectorMap.addEventListener("pointerup", (event) => {
+        mapState.dragging = false;
+        vectorMap.classList.remove("dragging");
+        if (vectorMap.hasPointerCapture(event.pointerId)) vectorMap.releasePointerCapture(event.pointerId);
+      });
+    }
+
+    document.querySelectorAll(".case-dot").forEach((dot) => {
+      const tip = dot.dataset.tip || dot.getAttribute("title");
+      if (tip) {
+        dot.dataset.tip = tip;
+        dot.setAttribute("aria-label", tip);
+        dot.removeAttribute("title");
+      }
+      dot.tabIndex = 0;
+      dot.addEventListener("pointerenter", () => {
+        activeDot = dot;
+        positionCasePopover(dot);
+      });
+      dot.addEventListener("focus", () => {
+        activeDot = dot;
+        positionCasePopover(dot);
+      });
+      dot.addEventListener("pointerleave", hideCasePopover);
+      dot.addEventListener("blur", hideCasePopover);
+    });
+
+    function syncDecisionSummary() {
+      const clusters = Array.from(document.querySelectorAll("[data-cluster]"));
+      const accepted = clusters.filter((cluster) => cluster.dataset.status === "accepted");
+      const rejected = clusters.filter((cluster) => cluster.dataset.status === "rejected");
+      const evalTotal = 24 + accepted.reduce((sum, cluster) => sum + Number(cluster.dataset.eval || 0), 0);
+      const trainTotal = 40 + accepted.reduce((sum, cluster) => sum + Number(cluster.dataset.train || 0), 0);
+      const acceptedNode = document.querySelector("[data-status-count='accepted']");
+      const rejectedNode = document.querySelector("[data-status-count='rejected']");
+      const summaryNode = document.querySelector("[data-status-summary]");
+      const evalNode = document.querySelector("[data-task-total='eval']");
+      const trainNode = document.querySelector("[data-task-total='train']");
+      if (acceptedNode) acceptedNode.textContent = `${accepted.length} 已采纳`;
+      if (rejectedNode) rejectedNode.textContent = `${rejected.length} 已拒绝`;
+      if (summaryNode) summaryNode.textContent = `${accepted.length} 已采纳 / ${rejected.length} 已拒绝`;
+      if (evalNode) evalNode.textContent = String(evalTotal);
+      if (trainNode) trainNode.textContent = String(trainTotal);
+    }
+
+    document.querySelectorAll("[data-root-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = button.dataset.rootId;
+        const cluster = document.querySelector(`[data-cluster='${id}']`);
+        if (!cluster) return;
+        const status = button.dataset.rootAction === "reject" ? "rejected" : "accepted";
+        const statusTag = cluster.querySelector("[data-status-tag]");
+        const decisionRow = cluster.querySelector(".decision-row");
+        cluster.dataset.status = status;
+        if (statusTag) {
+          statusTag.className = `tag ${status === "accepted" ? "emerald" : "rose"}`;
+          statusTag.textContent = status === "accepted" ? "已采纳" : "已拒绝";
+        }
+        if (decisionRow) decisionRow.classList.toggle("rejected", status === "rejected");
+        syncDecisionSummary();
+      });
+    });
+
+    const rootPageState = { page: 1, totalPages: 2 };
+    const pageNoteNode = document.querySelector(".cluster-page-note");
+
+    function syncRootPagination() {
+      const page = rootPageState.page;
+      if (pageNoteNode) pageNoteNode.textContent = page === 1 ? "1-20 / 27" : "21-27 / 27";
+      document.querySelectorAll("[data-root-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.rootPanel !== String(page);
+      });
+      document.querySelectorAll("[data-root-page]").forEach((button) => {
+        const target = button.dataset.rootPage;
+        button.classList.toggle("active", target === String(page));
+        button.disabled = (target === "prev" && page === 1) || (target === "next" && page === rootPageState.totalPages);
+      });
+    }
+
+    document.querySelectorAll("[data-root-page]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.rootPage;
+        if (target === "prev") rootPageState.page = Math.max(1, rootPageState.page - 1);
+        if (target === "next") rootPageState.page = Math.min(rootPageState.totalPages, rootPageState.page + 1);
+        if (target === "1" || target === "2") rootPageState.page = Number(target);
+        syncRootPagination();
+      });
+    });
+
+    applyMapTransform();
+    syncDecisionSummary();
+    syncRootPagination();
+  </script>
+</body>
+</html>

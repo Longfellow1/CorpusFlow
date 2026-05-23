@@ -1,0 +1,51 @@
+case_id,user_input,actual_output,expected_behavior,pass,failure_reason,failure_note,retrieved_contexts,tool_calls,trace_id,session_id,model,prompt_version,latency_ms,domain
+arb-001,自动前大灯是什么意思，我需要打开吗？,已为你打开自动前大灯。,识别为 Non_Action，落域到安全用车问答，解释自动前大灯功能和适用场景，不执行车控。,false,车控误纳，Action/Non_Action 性质标签误判，落域错误到传统车控。,车控误纳，Action/Non_Action 性质标签误判，落域错误到传统车控。,PRD痛点：传统技能优先导致解释类 query 被截断，非动作类指令应进入意图识别流程。,"[{""service"":""vehicle_light_control"",""action"":""open_auto_headlight""}]",trace-arb-001,session-control-misfire-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,82,vehicle_agent
+arb-002,儿童锁是干嘛的，开着会影响后排下车吗？,已开启儿童锁。,识别为 Non_Action，落域到安全用车/车控说明问答，解释儿童锁影响，不执行开关动作。,false,车控误纳，实体识别过于粗暴，将功能解释问句落域错误为车门车控。,车控误纳，实体识别过于粗暴，将功能解释问句落域错误为车门车控。,车控域包含车门、车窗、安全带等传统技能，解释类问法需要被性质标签降权。,"[{""service"":""door_control"",""action"":""child_lock_on""}]",trace-arb-002,session-control-misfire-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,76,vehicle_agent
+arb-003,方向盘加热费电吗，冬天要不要一直开？,已打开方向盘加热。,识别为 Non_Action，落域到用车知识问答，说明能耗和建议使用方式，不执行方向盘加热。,false,车控误纳，落域错误；咨询类 query 被传统车控技能截断。,车控误纳，落域错误；咨询类 query 被传统车控技能截断。,PRD目标：提升自然语义落域正确率，避免非动作类指令直接闭环。,"[{""service"":""steering_wheel_control"",""action"":""heat_on""}]",trace-arb-003,session-control-misfire-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,91,vehicle_agent
+arb-004,后视镜自动折叠是停车以后自己收起来吗？,已为你折叠后视镜。,识别为 Non_Action，解释后视镜自动折叠触发条件，不执行折叠动作。,false,车控误纳，动作/非动作分类失败，落域错误到后视镜控制。,车控误纳，动作/非动作分类失败，落域错误到后视镜控制。,融合标签仲裁规则：当性质标签为 Non_Action 时，降权或忽略 Action 类候选服务。,"[{""service"":""mirror_control"",""action"":""fold""}]",trace-arb-004,session-control-misfire-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,88,vehicle_agent
+arb-005,氛围灯的迎宾模式是什么意思？,已打开迎宾模式氛围灯。,识别为 Non_Action，落域到车辆功能说明，解释迎宾模式，不执行氛围灯设置。,false,车控误纳，候选服务优先级压过意图推理，落域错误。,车控误纳，候选服务优先级压过意图推理，落域错误。,传统技能优先命中导致 Query 无法释放到下游 LLM 意图识别。,"[{""service"":""ambient_light_control"",""action"":""welcome_mode_on""}]",trace-arb-005,session-control-misfire-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,93,vehicle_agent
+arb-006,底盘升降有什么用，跑高速要调高还是调低？,已将底盘调高。,识别为 Non_Action，解释底盘升降和高速场景建议，不执行底盘动作。,false,车控误纳，落域错误；问答意图被车控动作覆盖。,车控误纳，落域错误；问答意图被车控动作覆盖。,车控域包含底盘升降，解释类问题需要进入意图识别而非传统技能闭环。,"[{""service"":""chassis_control"",""action"":""raise""}]",trace-arb-006,session-control-misfire-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,96,vehicle_agent
+arb-007,低速提示音是给行人听的吗？,已关闭低速提示音。,识别为 Non_Action，落域到安全用车问答，解释低速提示音用途，不执行关闭。,false,车控误纳，安全解释问句落域错误到低速音控制。,车控误纳，安全解释问句落域错误到低速音控制。,PRD要求指令质检作为业务安全防线，确保最终下发符合业务预期。,"[{""service"":""low_speed_sound"",""action"":""off""}]",trace-arb-007,session-control-misfire-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,101,vehicle_agent
+arb-008,HUD抬头显示箭头有什么好处？,已开启 HUD 转向提示显示。,识别为 Non_Action，说明 HUD 抬头显示价值，不执行 HUD 设置。,false,车控误纳，落域错误到 HUD 设置；性质标签没有压制 Action 候选。,车控误纳，落域错误到 HUD 设置；性质标签没有压制 Action 候选。,融合标签判定需要在双命中+Non_Action 时选择智能体问答而非传统技能。,"[{""service"":""hud_control"",""action"":""navigation_on""}]",trace-arb-008,session-control-misfire-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,84,vehicle_agent
+arb-009,自动泊车会不会自己刹停？,已开启自动泊车。,识别为 Non_Action，落域到辅助驾驶说明，解释自动泊车能力边界，不执行泊车动作。,false,车控误纳，落域错误；能力咨询被传统辅助驾驶技能截断。,车控误纳，落域错误；能力咨询被传统辅助驾驶技能截断。,PRD痛点：用户意图未被正确识别和下发，影响基础体验流畅性。,"[{""service"":""adas_control"",""action"":""auto_parking_on""}]",trace-arb-009,session-control-misfire-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,109,vehicle_agent
+arb-010,座椅通风和空调吹风有什么区别？,已打开主驾座椅通风。,识别为 Non_Action，比较座椅通风与空调出风差异，不执行座椅动作。,false,车控误纳，落域错误；解释类 query 被判成 Action。,车控误纳，落域错误；解释类 query 被判成 Action。,动作/非动作二分类准确率是 PRD 核心指标之一。,"[{""service"":""seat_control"",""action"":""ventilation_on""}]",trace-arb-010,session-control-misfire-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,87,vehicle_agent
+arb-011,给我播放一个粉色小猪的节目,我可以和你聊聊粉色小猪。,落域到儿童节目/媒体播放服务，调用节目播放能力，搜索并播放相关节目。,false,PK仲裁失效，应调用节目播放服务但未调用；传统技能域与大模型域都能响应时仲裁结果不合理。,PK仲裁失效，应调用节目播放服务但未调用；传统技能域与大模型域都能响应时仲裁结果不合理。,PRD示例：给我播放一个粉色小猪的节目，后置仲裁无法有效落域。,[],trace-arb-011,session-pk-miss-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,214,vehicle_agent
+arb-012,播放小朋友听的西游记故事,西游记是中国古典四大名著之一。,落域到媒体/儿童故事播放服务，调用内容搜索并播放儿童版西游记故事。,false,PK仲裁失效，应调用节目播放工具但未调用；内容播放意图被闲聊覆盖。,PK仲裁失效，应调用节目播放工具但未调用；内容播放意图被闲聊覆盖。,高频失效域：节目播放类。最终应输出 Query+意图标签给下游。,[],trace-arb-012,session-pk-miss-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,225,vehicle_agent
+arb-013,帮我搜附近还营业的洗车店,你可以在地图里搜索洗车店。,落域到 POI 搜索服务，调用附近搜索并按营业状态过滤。,false,PK仲裁失效，应调用POI查询工具但未调用；只给文本建议。,PK仲裁失效，应调用POI查询工具但未调用；只给文本建议。,高频失效域：POI搜索类。仲裁PK结果应生成唯一最优落域并下发。,[],trace-arb-013,session-pk-miss-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,238,vehicle_agent
+arb-014,找个评分高的充电站，别太远,附近可能有一些充电站。,落域到充电/POI搜索服务，调用附近充电站查询并带评分、距离约束。,false,PK仲裁失效，应调用POI或充电查询工具但未调用；复合约束没有进入服务参数。,PK仲裁失效，应调用POI或充电查询工具但未调用；复合约束没有进入服务参数。,综合候选服务、优先级List与性质标签后，应选择可执行服务单元。,[],trace-arb-014,session-pk-miss-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,242,vehicle_agent
+arb-015,查一下今天上海外牌高架限行,今天出行请注意安全。,落域到限行/用车查询服务，调用检索并返回限行时间、范围和依据。,false,PK仲裁失效，应调用限行查询或检索工具但未调用；被泛化回答覆盖。,PK仲裁失效，应调用限行查询或检索工具但未调用；被泛化回答覆盖。,意图识别模块需命中安全用车/出行查询粗标签，并输出给下游。,[],trace-arb-015,session-pk-miss-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,251,vehicle_agent
+arb-016,看看今天有什么汽车新闻,汽车行业最近发展很快。,落域到新闻服务，调用新闻检索并播报汽车新闻摘要。,false,PK仲裁失效，应调用新闻检索工具但未调用；新闻类意图被闲聊覆盖。,PK仲裁失效，应调用新闻检索工具但未调用；新闻类意图被闲聊覆盖。,高频失效域：新闻类。意图分类准确率是保障精准分流的核心。,[],trace-arb-016,session-pk-miss-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,231,vehicle_agent
+arb-017,导航去最近的三甲医院急诊,如果身体不适请及时就医。,落域到导航/POI服务，查询最近三甲医院急诊并发起导航确认。,false,PK仲裁失效，应调用导航和POI查询工具但未调用；医疗咨询域抢占了可执行意图。,PK仲裁失效，应调用导航和POI查询工具但未调用；医疗咨询域抢占了可执行意图。,同一类意图在不同场景中语义定义不同，人工规则难以区分。,[],trace-arb-017,session-pk-miss-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,246,vehicle_agent
+arb-018,帮我搜一下附近的亲子餐厅，价格别太贵,亲子餐厅通常适合带孩子用餐。,落域到美食/POI搜索服务，调用附近搜索并带亲子、价格约束。,false,PK仲裁失效，应调用美食POI工具但未调用；智能体问答覆盖了服务落域。,PK仲裁失效，应调用美食POI工具但未调用；智能体问答覆盖了服务落域。,快速命中未覆盖时，LLM推理应输出意图标签，仲裁PK应下发到对应服务。,[],trace-arb-018,session-pk-miss-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,227,vehicle_agent
+arb-019,播放我收藏里的白噪音,白噪音有助于放松。,落域到媒体播放服务，查询收藏列表并播放白噪音。,false,PK仲裁失效，应调用媒体播放工具但未调用；播放动作被非执行回答吞掉。,PK仲裁失效，应调用媒体播放工具但未调用；播放动作被非执行回答吞掉。,仲裁PK执行成功率目标要求最终指令完成下发。,[],trace-arb-019,session-pk-miss-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,218,vehicle_agent
+arb-020,帮我找附近有停车场的商场,很多商场都配有停车场。,落域到POI搜索服务，调用商场搜索并过滤停车场条件。,false,PK仲裁失效，应调用POI查询工具但未调用；查询类指令没有下发。,PK仲裁失效，应调用POI查询工具但未调用；查询类指令没有下发。,PRD要求最终输出 Query+意图标签 给到下游，生成唯一匹配结果。,[],trace-arb-020,session-pk-miss-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,239,vehicle_agent
+arb-021,"user: 帮我导航到环球港
+assistant: 已开始导航到环球港
+user: 那附近有没有能停车的咖啡店？",请告诉我你想查询哪个地点附近的咖啡店。,承接上一轮目的地环球港，落域到POI搜索，查询附近可停车咖啡店。,false,跨域追问导致上一轮上下文丢失，未承接历史目的地。,跨域追问导致上一轮上下文丢失，未承接历史目的地。,PRD痛点：跨域继承情况不支持，用户追问可能涉及跨域，导致PK规则失效。,[],trace-arb-021,session-context-loss-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,260,vehicle_agent
+arb-022,"user: 播放儿童故事
+assistant: 正在播放儿童故事
+user: 换成粉色小猪那个",你想换成什么内容？,承接上一轮节目播放场景，将“那个”解析为粉色小猪相关儿童节目并调用播放。,false,多轮上下文承接失败，指代解析失败，跨域追问没有继承媒体播放意图。,多轮上下文承接失败，指代解析失败，跨域追问没有继承媒体播放意图。,PK仲裁失效的原因之一：同一类意图用户追问可能涉及跨域，规则直接失效。,[],trace-arb-022,session-context-loss-01,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,272,vehicle_agent
+arb-023,"user: 空调调到24度
+assistant: 已将空调调到24度
+user: 后排也一样",请问你想设置后排什么功能？,承接上一轮空调温度设置，把后排空调也设置到24度。,false,多轮上下文承接失败，上一轮动作和参数丢失。,多轮上下文承接失败，上一轮动作和参数丢失。,落域模块目标包含提升上下文能力，当前没有把历史状态注入仲裁决策。,[],trace-arb-023,session-context-loss-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,198,vehicle_agent
+arb-024,"user: 查一下外滩附近的停车场
+assistant: 找到几个停车场
+user: 选最近的那个带我去",你想去哪里？,承接上一轮POI候选，选择最近停车场并发起导航。,false,多轮上下文承接失败，候选列表和指代“那个”丢失。,多轮上下文承接失败，候选列表和指代“那个”丢失。,仲裁决策链条应记录候选服务和最终胜出者，当前跨轮候选没有保留。,[],trace-arb-024,session-context-loss-02,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,264,vehicle_agent
+arb-025,"user: 帮我搜附近川菜馆
+assistant: 找到3家川菜馆
+user: 第二家评分怎么样？",请告诉我餐厅名称。,承接上一轮搜索结果，查询第二家餐厅评分。,false,多轮上下文承接失败，上一轮POI列表未进入当前意图解析。,多轮上下文承接失败，上一轮POI列表未进入当前意图解析。,高频POI搜索类在追问中需要支持跨域继承。,[],trace-arb-025,session-context-loss-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,248,vehicle_agent
+arb-026,"user: 打开座椅通风
+assistant: 已打开主驾座椅通风
+user: 副驾也打开",请问要打开副驾什么功能？,承接上一轮车控功能，将副驾座椅通风打开。,false,多轮上下文承接失败，历史车控服务和槽位没有继承。,多轮上下文承接失败，历史车控服务和槽位没有继承。,车控域功能多，追问中需要保留上一轮 service_id、service_type 与参数。,[],trace-arb-026,session-context-loss-03,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,181,vehicle_agent
+arb-027,"user: 播放今天的财经新闻
+assistant: 正在播放财经新闻
+user: 换成汽车相关的",汽车相关可以包含保养、车型、新闻等，你想了解哪类？,承接上一轮新闻播放场景，切换到汽车新闻并继续播报。,false,多轮上下文承接失败，跨域追问没有继承新闻类播放意图。,多轮上下文承接失败，跨域追问没有继承新闻类播放意图。,PRD提到新闻类是PK仲裁失效高频域，追问跨域会让规则失效。,[],trace-arb-027,session-context-loss-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,236,vehicle_agent
+arb-028,"user: 导航到公司
+assistant: 已为你规划到公司的路线
+user: 避开高架重新走",请告诉我要避开哪条高架。,承接上一轮路线，重新规划到公司且设置避开高架。,false,多轮上下文承接失败，上一轮导航目标和路线约束丢失。,多轮上下文承接失败，上一轮导航目标和路线约束丢失。,上下文能力是PRD目标之一，当前仲裁没有继承上一轮目标。,[],trace-arb-028,session-context-loss-04,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,244,vehicle_agent
+arb-029,"user: 帮我搜附近的加油站
+assistant: 已找到附近加油站
+user: 有没有能洗车的？",请问你想找哪个城市的洗车店？,承接上一轮附近加油站结果，筛选带洗车服务的加油站。,false,多轮上下文承接失败，附近范围和加油站候选没有继承。,多轮上下文承接失败，附近范围和加油站候选没有继承。,POI搜索追问涉及跨域补充条件，需保留历史检索上下文。,[],trace-arb-029,session-context-loss-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,252,vehicle_agent
+arb-030,"user: 打开香氛
+assistant: 已打开海洋香氛
+user: 换淡一点",请告诉我你想调整什么淡一点。,承接上一轮香氛服务，降低当前香氛浓度。,false,多轮上下文承接失败，上一轮车控服务和程度修饰没有继承。,多轮上下文承接失败，上一轮车控服务和程度修饰没有继承。,车控域包含香氛；自然语义追问需要继承历史 service 和 slot。,[],trace-arb-030,session-context-loss-05,cabin-intent-arbiter-demo,intent-arbitration-prd-0909,176,vehicle_agent

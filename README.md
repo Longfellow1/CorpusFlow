@@ -15,6 +15,41 @@ CorpusFlow 不是一个 Prompt 游乐场。它把“导入原始数据 → 字�
 
 ---
 
+## 比赛背景与在线演示
+
+CorpusFlow 当前服务于 NEXTAI 赛事赛道三「研发效能·提质增效」复赛演示。复赛版本的重点不是把产品做成完整评测平台，而是展示一条可复用的数据闭环：
+
+```text
+badcase / FAQ / 测试记录 / 用户反馈
+  → 字段识别与安全拒识
+  → 批量生成 QA / 指令微调 / 多轮数据
+  → 人工复核
+  → JSON / CSV / JSONL 导出
+  → 进入下一轮训练或回归评测
+```
+
+线上演示采用 **Cloudflare Pages + Render** 的分层部署：
+
+```text
+用户浏览器
+  → Cloudflare Pages: https://corpusflow-demo.pages.dev
+  → VITE_API_BASE_URL
+  → Render Express API: https://corpusflow-app.onrender.com
+  → ALGORITHM_BASE_URL
+  → Render FastAPI 算法服务: https://corpusflow-algorithm.onrender.com
+  → Ark / Doubao 模型
+```
+
+Cloudflare Pages 只承载 React/Vite 静态前端；Express API 和 Python 算法服务作为 Render 常驻服务运行。线上排障时优先检查：
+
+```bash
+curl https://corpusflow-app.onrender.com/api/health
+```
+
+期望 `node: true` 且 `algorithm.ok: true`。如果直接访问 `https://corpusflow-demo.pages.dev/api/health` 返回前端 HTML 或非 API 响应，说明请求打到了静态 Pages，而不是 Render API。
+
+---
+
 ## 为什么需要 CorpusFlow
 
 微调数据生产通常卡在三个地方：
@@ -239,6 +274,19 @@ curl http://localhost:3000/api/health
 │ LLM 编排、语义解析、批量生成、进度与取消       │
 └─────────────────────────────────────────────┘
 ```
+
+第一版部署推荐：
+
+```text
+Cloudflare Pages
+  → React/Vite 静态前端
+  → VITE_API_BASE_URL
+  → 外部 Express API（当前演示：Render corpusflow-app）
+  → 外部 FastAPI 算法服务（当前演示：Render corpusflow-algorithm）
+  → Ark / Doubao 模型
+```
+
+这个形态优先保证演示 URL 稳定可访问；Express 和 FastAPI 暂不强行迁移到 Cloudflare Workers。
 
 ---
 

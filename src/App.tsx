@@ -81,6 +81,14 @@ import {
 import { detectRejectionRisk, type RejectionCheck } from "./utils/rejectionSafety";
 import { getFineTuneModeContract, getMissingContractRequirements, getQuickModeContract } from "./utils/workspaceModeContract";
 import { QuickTaskWorkspace } from "./components/QuickTaskWorkspace";
+import { EvaluationWorkspace } from "./components/EvaluationWorkspace";
+import {
+  parseEvaluationEvidenceFile,
+  type ClusterDecisionStatus,
+  type EvaluationSnapshot,
+  type ProblemCluster,
+} from "./utils/evaluationMode";
+import { withMinimumDuration } from "./utils/timing";
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -95,7 +103,7 @@ interface Task {
   active?: boolean;
   status: "running" | "completed" | "idle";
   businessType?: "evaluation" | "training";
-  workMode?: "quick" | "advanced";
+  workMode?: "quick" | "advanced" | "evaluation";
 }
 
 interface SeedData {
@@ -198,14 +206,16 @@ const InputGroup = ({ label, value, placeholder, readOnly = false }: { label: st
   </div>
 );
 
-type View = 'home' | 'fine-tune' | 'quick' | 'batch' | 'task-list';
+type View = 'home' | 'fine-tune' | 'quick' | 'evaluation' | 'batch' | 'task-list';
 type QuickWorkspaceSnapshot = ReturnType<typeof createEmptyQuickWorkspaceState>;
 const MIN_SIDEBAR_RATIO = 1 / 6;
 const MAX_SIDEBAR_RATIO = 1 / 3;
 const DEFAULT_FINE_TUNE_SIDEBAR_WIDTH = 292;
 const DEFAULT_QUICK_SIDEBAR_WIDTH = 320;
+const DEFAULT_EVALUATION_SIDEBAR_WIDTH = 360;
 const ABSOLUTE_MIN_SIDEBAR_WIDTH = 260;
 const ABSOLUTE_MAX_SIDEBAR_WIDTH = 520;
+const EVALUATION_REASONING_DELAY_MS = 8000;
 type FineTuneProgress = {
   stage: "idle" | "preparing" | "generating";
   completed: number;
@@ -226,6 +236,7 @@ type GenerationRequest = {
 };
 
 function getTaskView(task: Task): View {
+  if (task.workMode === "evaluation" || task.name.includes("评测")) return "evaluation";
   if (task.name.includes("批量")) return "quick";
   if (task.workMode === "quick" || task.name.includes("快速")) return "quick";
   return "fine-tune";
@@ -233,6 +244,9 @@ function getTaskView(task: Task): View {
 
 function getTaskBadge(task: Task) {
   const view = getTaskView(task);
+  if (view === "evaluation") {
+    return { label: "评测增强", className: "bg-cyan-500/10 text-cyan-300" };
+  }
   if (view === "batch") {
     return { label: "批量任务", className: "bg-sky-500/10 text-sky-400" };
   }
@@ -367,8 +381,12 @@ export default function App() {
     mode: 'balanced' as 'conservative' | 'balanced' | 'creative'
   });
   const [quickWorkspaceByTask, setQuickWorkspaceByTask] = useState<Record<string, QuickWorkspaceSnapshot>>({});
+  const [evaluationSnapshotByTask, setEvaluationSnapshotByTask] = useState<Record<string, EvaluationSnapshot | null>>({});
+  const [evaluationStatus, setEvaluationStatus] = useState<"idle" | "parsing" | "working">("idle");
+  const [evaluationError, setEvaluationError] = useState("");
   const [fineTuneSidebarWidth, setFineTuneSidebarWidth] = useState(DEFAULT_FINE_TUNE_SIDEBAR_WIDTH);
   const [quickSidebarWidth, setQuickSidebarWidth] = useState(DEFAULT_QUICK_SIDEBAR_WIDTH);
+  const [evaluationSidebarWidth, setEvaluationSidebarWidth] = useState(DEFAULT_EVALUATION_SIDEBAR_WIDTH);
 
   // Login state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -385,6 +403,7 @@ export default function App() {
   const quickGeneratedItemsRef = useRef<GeneratedItem[]>([]);
   const currentQuickWorkspaceKey = activeTask || "__quick-adhoc__";
   const currentQuickWorkspace = quickWorkspaceByTask[currentQuickWorkspaceKey] ?? createEmptyQuickWorkspaceState();
+  const currentEvaluationSnapshot = activeTask ? evaluationSnapshotByTask[activeTask] ?? null : null;
   const {
     quickImportStatus,
     quickImportError,
@@ -524,7 +543,10 @@ export default function App() {
     try {
       const activeTaskRecord = tasks.find((task) => task.id === activeTask);
       const shouldSaveQuickWorkspace = view === "quick" || activeTaskRecord?.workMode === "quick";
-      if (shouldSaveQuickWorkspace) {
+      const shouldSaveEvaluationWorkspace = view === "evaluation" || activeTaskRecord?.workMode === "evaluation";
+      if (shouldSaveEvaluationWorkspace && currentEvaluationSnapshot) {
+        await apiService.saveWorkspace(activeTask, currentEvaluationSnapshot);
+      } else if (shouldSaveQuickWorkspace) {
         await apiService.saveWorkspace(activeTask, currentQuickWorkspace);
       } else {
         await Promise.all([
@@ -562,7 +584,7 @@ export default function App() {
         addToast("保存失败，请稍后重试");
       }
     }
-  }, [activeTask, addToast, currentQuickWorkspace, generatedData, isLoggedIn, seeds, tasks, view]);
+  }, [activeTask, addToast, currentEvaluationSnapshot, currentQuickWorkspace, generatedData, isLoggedIn, seeds, tasks, view]);
 
   useEffect(() => {
     quickGeneratedItemsRef.current = quickGeneratedItems as GeneratedItem[];
@@ -584,19 +606,23 @@ export default function App() {
     return false;
   }, [isLoggedIn]);
 
-  const createWorkspaceTask = useCallback(async (workMode: "quick" | "advanced") => {
+  const createWorkspaceTask = useCallback(async (workMode: "quick" | "advanced" | "evaluation") => {
     const nextMode = workMode === "quick" ? "quick" : "single";
-    const taskName = workMode === "quick"
-      ? `批量任务-${new Date().toLocaleTimeString()}`
-      : `精调任务-${new Date().toLocaleTimeString()}`;
-    const newTask = await apiService.createTask({
-      name: taskName,
-      businessType: workMode === "quick" ? "evaluation" : "training",
-      workMode,
-    });
+    const taskName = workMode === "evaluation"
+      ? `评测任务-${new Date().toLocaleTimeString()}`
+      : workMode === "quick"
+        ? `批量任务-${new Date().toLocaleTimeString()}`
+        : `精调任务-${new Date().toLocaleTimeString()}`;
+    const newTask = workMode === "evaluation"
+      ? await apiService.createEvaluationTask({ name: taskName })
+      : await apiService.createTask({
+        name: taskName,
+        businessType: workMode === "quick" ? "evaluation" : "training",
+        workMode,
+      });
     setTasks((prev) => [newTask as Task, ...prev]);
     setActiveTask(newTask.id);
-    setView(workMode === "quick" ? "quick" : "fine-tune");
+    setView(workMode === "evaluation" ? "evaluation" : workMode === "quick" ? "quick" : "fine-tune");
     setMode(nextMode);
     if (workMode === "advanced") {
       setFineTuneMultiTurnEnabled(false);
@@ -609,6 +635,12 @@ export default function App() {
       setQuickWorkspaceByTask((prev) => ({
         ...prev,
         [newTask.id]: createEmptyQuickWorkspaceState(),
+      }));
+    }
+    if (workMode === "evaluation") {
+      setEvaluationSnapshotByTask((prev) => ({
+        ...prev,
+        [newTask.id]: null,
       }));
     }
     return newTask as Task;
@@ -659,6 +691,28 @@ export default function App() {
     setMode('quick');
   }, [activeTask, createWorkspaceTask, requireLoginForWorkspace, tasks]);
 
+  const openEvaluationWorkspace = useCallback(async () => {
+    if (!requireLoginForWorkspace()) return;
+    const activeTaskRecord = tasks.find((task) => task.id === activeTask);
+    const targetTask = activeTaskRecord && getTaskView(activeTaskRecord) === "evaluation"
+      ? activeTaskRecord
+      : tasks.find((task) => getTaskView(task) === "evaluation");
+    if (targetTask) {
+      setActiveTask(targetTask.id);
+    } else {
+      try {
+        await createWorkspaceTask("evaluation");
+        return;
+      } catch (error) {
+        console.error("Create evaluation task failed", error);
+        setApiError("创建评测任务失败");
+        return;
+      }
+    }
+    setView("evaluation");
+    setMode("single");
+  }, [activeTask, createWorkspaceTask, requireLoginForWorkspace, tasks]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const email = tempEmail.trim();
@@ -689,6 +743,7 @@ export default function App() {
         setTasks(nextTasks as Task[]);
         setTaskDataMap({});
         setQuickWorkspaceByTask({});
+        setEvaluationSnapshotByTask({});
         setGenerationRequest(null);
         setLastSavedAt("");
         setIsTaskDataLoaded(false);
@@ -714,6 +769,7 @@ export default function App() {
     setGeneratedData([]);
     setTaskDataMap({});
     setQuickWorkspaceByTask({});
+    setEvaluationSnapshotByTask({});
     setGenerationRequest(null);
     setIsTaskDataLoaded(false);
     setLastSavedAt("");
@@ -753,6 +809,7 @@ export default function App() {
         setTasks(nextTasks as Task[]);
         setTaskDataMap({});
         setQuickWorkspaceByTask({});
+        setEvaluationSnapshotByTask({});
         setGenerationRequest(null);
         void hydrateQuickWorkspaces(nextTasks as Task[]);
         setActiveTask((nextTasks as Task[])[0]?.id || "");
@@ -764,6 +821,7 @@ export default function App() {
           setUserEmail("");
           setTasks([]);
           setTaskDataMap({});
+          setEvaluationSnapshotByTask({});
         }
       } finally {
         if (!cancelled) {
@@ -850,6 +908,31 @@ export default function App() {
     };
   }, [activeTask, isLoggedIn]);
 
+  useEffect(() => {
+    if (!isLoggedIn || !activeTask) return;
+    const activeTaskRecord = tasks.find((task) => task.id === activeTask);
+    if (!activeTaskRecord || getTaskView(activeTaskRecord) !== "evaluation") return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const snapshot = await apiService.getEvaluationSnapshot(activeTask);
+        if (!cancelled) {
+          setEvaluationSnapshotByTask((prev) => ({
+            ...prev,
+            [activeTask]: snapshot,
+          }));
+        }
+      } catch (error) {
+        console.error("Failed to load evaluation snapshot", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTask, isLoggedIn, tasks]);
+
   // Save to map whenever seeds or generatedData change
   useEffect(() => {
     if (!activeTask) return;
@@ -871,7 +954,7 @@ export default function App() {
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [activeTask, currentQuickWorkspace, generatedData, isLoggedIn, isTaskDataLoaded, saveCurrentWorkspace, seeds]);
+  }, [activeTask, currentEvaluationSnapshot, currentQuickWorkspace, generatedData, isLoggedIn, isTaskDataLoaded, saveCurrentWorkspace, seeds]);
 
   // Generation Loop
   useEffect(() => {
@@ -951,18 +1034,20 @@ export default function App() {
 
   const handleCreateTask = async () => {
     const name = newTaskName || `新任务-${new Date().toLocaleTimeString()}`;
-    const workMode = view === "quick" || mode === "quick" ? "quick" : "advanced";
+    const workMode = view === "evaluation" ? "evaluation" : view === "quick" || mode === "quick" ? "quick" : "advanced";
     try {
-      const newTask = await apiService.createTask({
-        name,
-        businessType: mode === "instruct" ? "training" : "evaluation",
-        workMode,
-      });
+      const newTask = workMode === "evaluation"
+        ? await apiService.createEvaluationTask({ name })
+        : await apiService.createTask({
+          name,
+          businessType: mode === "instruct" ? "training" : "evaluation",
+          workMode,
+        });
 
       setTasks((prev) => [newTask as Task, ...prev]);
       setNewTaskName("");
       setActiveTask(newTask.id);
-      setView(workMode === "quick" ? "quick" : "fine-tune");
+      setView(workMode === "evaluation" ? "evaluation" : workMode === "quick" ? "quick" : "fine-tune");
       setMode(workMode === "quick" ? "quick" : "single");
       if (workMode === "advanced") {
         setFineTuneMultiTurnEnabled(false);
@@ -971,6 +1056,9 @@ export default function App() {
         ...prev,
         [newTask.id]: { seeds: [], generated: [] },
       }));
+      if (workMode === "evaluation") {
+        setEvaluationSnapshotByTask((prev) => ({ ...prev, [newTask.id]: null }));
+      }
     } catch (error) {
       console.error("Create task failed", error);
       setApiError("创建任务失败");
@@ -992,6 +1080,11 @@ export default function App() {
         return newMap;
       });
       setQuickWorkspaceByTask(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setEvaluationSnapshotByTask(prev => {
         const next = { ...prev };
         delete next[id];
         return next;
@@ -1363,6 +1456,151 @@ export default function App() {
     updateQuickWorkspace({ quickRunStatus: "stopping" });
   }, [updateQuickWorkspace]);
 
+  const updateEvaluationSnapshot = useCallback((snapshot: EvaluationSnapshot | null) => {
+    if (!activeTask) return;
+    setEvaluationSnapshotByTask((prev) => ({
+      ...prev,
+      [activeTask]: snapshot,
+    }));
+  }, [activeTask]);
+
+  const handleEvaluationImport = useCallback(async (file: File) => {
+    if (!activeTask) return;
+    setEvaluationStatus("parsing");
+    setEvaluationError("");
+    try {
+      const parsed = await parseEvaluationEvidenceFile(file);
+      const snapshot = await withMinimumDuration(
+        () => apiService.parseEvaluationRows(activeTask, {
+          sourceFile: parsed.sourceFile,
+          rows: parsed.rows,
+        }),
+        EVALUATION_REASONING_DELAY_MS,
+      );
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Evaluation import failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "评测证据解析失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const handleLoadEvaluationSample = useCallback(async () => {
+    if (!activeTask) return;
+    setEvaluationStatus("working");
+    setEvaluationError("");
+    try {
+      const snapshot = await withMinimumDuration(
+        () => apiService.loadEvaluationSample(activeTask),
+        EVALUATION_REASONING_DELAY_MS,
+      );
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Load evaluation sample failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "复赛样例载入失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const handleEvaluationClusterStatus = useCallback(async (clusterId: string, status: ClusterDecisionStatus) => {
+    if (!activeTask) return;
+    setEvaluationStatus("working");
+    setEvaluationError("");
+    try {
+      const snapshot = await apiService.updateEvaluationCluster(activeTask, clusterId, { status });
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Update evaluation cluster failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "根因状态更新失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const handleEvaluationStrategyUpdate = useCallback(async (
+    clusterId: string,
+    strategy: Partial<ProblemCluster["recommendedStrategy"]>,
+  ) => {
+    if (!activeTask) return;
+    setEvaluationStatus("working");
+    setEvaluationError("");
+    try {
+      const snapshot = await apiService.updateEvaluationCluster(activeTask, clusterId, { strategy });
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Update evaluation strategy failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "生产策略更新失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const handleEvaluationPreview = useCallback(async () => {
+    if (!activeTask) return;
+    setEvaluationStatus("working");
+    setEvaluationError("");
+    try {
+      const snapshot = await withMinimumDuration(
+        () => apiService.previewEvaluationAssets(activeTask),
+        EVALUATION_REASONING_DELAY_MS,
+      );
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Preview evaluation assets failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "资产预览生成失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const handleEvaluationPackage = useCallback(async () => {
+    if (!activeTask) return;
+    setEvaluationStatus("working");
+    setEvaluationError("");
+    try {
+      const snapshot = await withMinimumDuration(
+        () => apiService.generateEvaluationPackage(activeTask),
+        EVALUATION_REASONING_DELAY_MS,
+      );
+      updateEvaluationSnapshot(snapshot);
+    } catch (error) {
+      console.error("Generate evaluation package failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "资产包生成失败");
+    } finally {
+      setEvaluationStatus("idle");
+    }
+  }, [activeTask, updateEvaluationSnapshot]);
+
+  const downloadTextFile = (fileName: string, content: string) => {
+    const mimeType = fileName.endsWith(".json") ? "application/json" : "text/plain";
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleEvaluationDownload = useCallback(async (fileName: string) => {
+    if (!activeTask) return;
+    setIsExporting(true);
+    setEvaluationError("");
+    try {
+      const result = await apiService.downloadEvaluationAsset(activeTask, fileName);
+      downloadTextFile(result.fileName, result.content);
+    } catch (error) {
+      console.error("Download evaluation asset failed", error);
+      setEvaluationError(error instanceof Error ? error.message : "资产文件下载失败");
+    } finally {
+      setIsExporting(false);
+    }
+  }, [activeTask]);
+
   const navigateToView = useCallback((nextView: View) => {
     if (view === "quick" && nextView !== "quick" && quickRunStatus === "running") {
       handlePauseQuickGeneration();
@@ -1377,6 +1615,9 @@ export default function App() {
     setMode(nextView === "quick" ? "quick" : "single");
     if (nextView === "fine-tune") {
       setFineTuneMultiTurnEnabled(false);
+    }
+    if (nextView === "evaluation") {
+      setEvaluationError("");
     }
   }, [navigateToView]);
 
@@ -1873,6 +2114,12 @@ export default function App() {
   }, []);
   const getQuickWorkspaceForTask = (taskId: string) => quickWorkspaceByTask[taskId] ?? null;
   const getTaskGeneratedCount = (task: Task) => {
+    if (getTaskView(task) === "evaluation") {
+      const snapshot = evaluationSnapshotByTask[task.id];
+      return snapshot?.package
+        ? snapshot.package.files["eval_cases.jsonl"] + snapshot.package.files["training_candidates.jsonl"] + snapshot.package.files["negative_cases.jsonl"]
+        : snapshot?.clusters.length ?? 0;
+    }
     if (getTaskView(task) === "quick") {
       const workspace = getQuickWorkspaceForTask(task.id);
       return workspace?.quickGeneratedItems.length ?? 0;
@@ -1880,6 +2127,11 @@ export default function App() {
     return task.id === activeTask ? generatedData.length : (task.status === "completed" ? 100 : 0);
   };
   const getTaskAssetLabel = (task: Task) => {
+    if (getTaskView(task) === "evaluation") {
+      const snapshot = evaluationSnapshotByTask[task.id];
+      if (snapshot?.sourceFile) return snapshot.sourceFile;
+      return "打开诊断";
+    }
     if (getTaskView(task) !== "quick") return task.time;
     const workspace = getQuickWorkspaceForTask(task.id);
     if (workspace?.quickFile?.name) return workspace.quickFile.name;
@@ -1893,17 +2145,21 @@ export default function App() {
     }
     openTask(task);
   };
-  const renderTaskSwitcher = (accent: "indigo" | "emerald") => {
-    const targetView = accent === "emerald" ? "quick" : "fine-tune";
+  const renderTaskSwitcher = (accent: "indigo" | "emerald" | "cyan") => {
+    const targetView = accent === "cyan" ? "evaluation" : accent === "emerald" ? "quick" : "fine-tune";
     const modeTasks = tasks.filter((task) => getTaskView(task) === targetView);
     const activeTaskRecord = modeTasks.find((task) => task.id === activeTask);
     const selectValue = activeTaskRecord ? activeTask : "";
-    const accentClasses = accent === "emerald"
-      ? "focus:border-emerald-500 text-emerald-100"
-      : "focus:border-indigo-500 text-indigo-100";
-    const buttonClasses = accent === "emerald"
-      ? "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30"
-      : "bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30";
+    const accentClasses = accent === "cyan"
+      ? "focus:border-cyan-500 text-cyan-100"
+      : accent === "emerald"
+        ? "focus:border-emerald-500 text-emerald-100"
+        : "focus:border-indigo-500 text-indigo-100";
+    const buttonClasses = accent === "cyan"
+      ? "bg-cyan-600/20 text-cyan-200 hover:bg-cyan-600/30"
+      : accent === "emerald"
+        ? "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30"
+        : "bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30";
     return (
       <div className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-3">
         <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-widest text-slate-500">
@@ -1934,7 +2190,7 @@ export default function App() {
               )}
               {modeTasks.map((task) => (
                 <option key={task.id} value={task.id}>
-                  {getTaskView(task) === "quick" ? "批量 · " : "精调 · "}{task.name}
+                  {getTaskView(task) === "evaluation" ? "评测 · " : getTaskView(task) === "quick" ? "批量 · " : "精调 · "}{task.name}
                 </option>
               ))}
             </select>
@@ -1981,9 +2237,9 @@ export default function App() {
   ) : null;
 
   return (
-    <div className="flex flex-col h-screen bg-[#12121A] text-slate-300 font-sans overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-[#12121A] text-slate-300 font-sans overflow-hidden [min-height:100dvh]">
       {/* Top Header */}
-      <header className="relative h-12 border-b border-slate-800 bg-[#1A1A27] flex items-center justify-between px-4 shrink-0 z-20">
+      <header className="relative min-h-12 border-b border-slate-800 bg-[#1A1A27] flex items-center justify-between gap-3 px-4 py-2 shrink-0 z-20">
         <div className="flex items-center gap-4">
           <div
             className="flex items-center gap-2 cursor-pointer group"
@@ -1994,14 +2250,14 @@ export default function App() {
             </div>
             <span className="font-bold text-lg tracking-tight text-white">CorpusFlow</span>
           </div>
-          <div className="h-4 w-px bg-slate-700 mx-2" />
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+          <div className="hidden h-4 w-px bg-slate-700 mx-2 sm:block" />
+          <div className="hidden items-center gap-2 text-sm font-medium text-slate-500 sm:flex">
             <span className={cn("cursor-pointer hover:text-indigo-400 transition-colors", view === 'home' && "text-indigo-400")} onClick={() => navigateToView('home')}>首页</span>
             {view !== 'home' && (
               <>
                 <ChevronLeft size={12} className="rotate-180" />
                 <span className="text-indigo-400">
-                  {view === 'fine-tune' ? '精调生成' : view === 'quick' ? '批量任务' : '任务列表'}
+                  {view === 'fine-tune' ? '精调生成' : view === 'quick' ? '批量任务' : view === "evaluation" ? "评测增强" : '任务列表'}
                 </span>
               </>
             )}
@@ -2009,7 +2265,7 @@ export default function App() {
         </div>
 
         {isLoggedIn && (
-          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full border border-slate-700 bg-slate-950/60 px-2 py-1 shadow-sm">
+          <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full border border-slate-700 bg-slate-950/60 px-2 py-1 shadow-sm md:flex">
             <button
               onClick={() => saveCurrentWorkspace("manual")}
               disabled={!activeTask}
@@ -2123,7 +2379,7 @@ export default function App() {
                 <div className="w-6 h-6 rounded-full bg-indigo-600/20 flex items-center justify-center text-indigo-400">
                   <User size={12} />
                 </div>
-                <span className="font-medium text-slate-200">{userEmail}</span>
+                <span className="hidden font-medium text-slate-200 sm:inline">{userEmail}</span>
               </div>
               <button
                 onClick={handleLogout}
@@ -2147,7 +2403,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex flex-1 overflow-hidden relative">
+      <main className="relative flex flex-1 min-h-0 overflow-hidden bg-[#12121A]">
         {/* View: Home */}
         <AnimatePresence mode="wait">
           {view === 'home' && (
@@ -2157,14 +2413,14 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.32, ease: "easeInOut" }}
-              className="absolute inset-0 overflow-y-auto p-12 custom-scrollbar flex flex-col items-center"
+              className="absolute inset-0 overflow-y-auto bg-[#12121A] p-4 sm:p-8 lg:p-12 custom-scrollbar flex flex-col items-center"
             >
-              <div className="max-w-5xl w-full space-y-12">
-                <div className="grid grid-cols-2 gap-8">
+              <div className="max-w-5xl w-full space-y-8 lg:space-y-12">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
                   {/* Fine-tune Card */}
                   <div
                     onClick={openFineTuneWorkspace}
-                    className="bg-[#1A1A27] border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center space-y-6 cursor-pointer hover:border-indigo-500/50 hover:bg-indigo-600/5 transition-all group shadow-xl"
+                    className="bg-[#1A1A27] border border-slate-800 rounded-2xl p-6 lg:p-8 flex flex-col items-center justify-center space-y-4 lg:space-y-6 cursor-pointer hover:border-indigo-500/50 hover:bg-indigo-600/5 transition-all group shadow-xl"
                   >
                     <div className="w-20 h-20 rounded-2xl bg-indigo-600/10 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
                       <Edit3 size={40} />
@@ -2178,7 +2434,7 @@ export default function App() {
                   {/* Quick Card */}
                   <div
                     onClick={openQuickWorkspace}
-                    className="bg-[#1A1A27] border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center space-y-6 cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-600/5 transition-all group shadow-xl"
+                    className="bg-[#1A1A27] border border-slate-800 rounded-2xl p-6 lg:p-8 flex flex-col items-center justify-center space-y-4 lg:space-y-6 cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-600/5 transition-all group shadow-xl"
                   >
                     <div className="w-20 h-20 rounded-2xl bg-emerald-600/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
                       <FileText size={40} />
@@ -2186,6 +2442,19 @@ export default function App() {
                     <div className="text-center">
                       <h2 className="text-xl font-bold text-white mb-2">批量任务</h2>
                       <p className="text-base text-slate-500">弱编辑、重吞吐，面向大批量生成与筛选</p>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={openEvaluationWorkspace}
+                    className="bg-[#1A1A27] border border-slate-800 rounded-2xl p-6 lg:p-8 flex flex-col items-center justify-center space-y-4 lg:space-y-6 cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-600/5 transition-all group shadow-xl"
+                  >
+                    <div className="w-20 h-20 rounded-2xl bg-cyan-600/10 flex items-center justify-center text-cyan-300 group-hover:scale-110 transition-transform">
+                      <FileJson size={40} />
+                    </div>
+                    <div className="text-center">
+                      <h2 className="text-xl font-bold text-white mb-2">评测增强</h2>
+                      <p className="text-base text-slate-500">从 badcase 归因到修复数据资产包</p>
                     </div>
                   </div>
                 </div>
@@ -2243,9 +2512,9 @@ export default function App() {
                             ) : (
                               <div className="min-w-0">
                                 <span className="block truncate text-sm font-medium text-slate-300 group-hover:text-white">{task.name}</span>
-                                {getTaskView(task) === "quick" && (
+                                {(getTaskView(task) === "quick" || getTaskView(task) === "evaluation") && (
                                   <span className="mt-0.5 block truncate text-[11px] text-slate-500">
-                                    {getTaskAssetLabel(task)} · {getTaskGeneratedCount(task)} 条结果
+                                    {getTaskAssetLabel(task)} · {getTaskGeneratedCount(task)} {getTaskView(task) === "evaluation" ? "项" : "条结果"}
                                   </span>
                                 )}
                               </div>
@@ -2777,6 +3046,33 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {view === "evaluation" && (
+            <motion.div
+              key="evaluation"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.32, ease: "easeInOut" }}
+              className="absolute inset-0 flex overflow-hidden bg-[#12121A] max-[819px]:flex-col max-[819px]:overflow-y-auto"
+            >
+              <EvaluationWorkspace
+                taskSwitcher={renderTaskSwitcher("cyan")}
+                sidebarWidth={evaluationSidebarWidth}
+                onSidebarResizeStart={(event) => beginSidebarResize(event, evaluationSidebarWidth, setEvaluationSidebarWidth)}
+                snapshot={currentEvaluationSnapshot}
+                status={evaluationStatus}
+                error={evaluationError}
+                onImportFile={handleEvaluationImport}
+                onLoadSample={handleLoadEvaluationSample}
+                onClusterStatusChange={handleEvaluationClusterStatus}
+                onUpdateStrategy={handleEvaluationStrategyUpdate}
+                onPreviewAssets={handleEvaluationPreview}
+                onGeneratePackage={handleEvaluationPackage}
+                onDownloadAsset={handleEvaluationDownload}
+              />
             </motion.div>
           )}
 

@@ -1,3 +1,5 @@
+import type { ClusterDecisionStatus, EvaluationSnapshot, ProblemCluster } from "../utils/evaluationMode";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
 const TOKEN_STORAGE_KEY = "corpusflow.authToken";
 const EMAIL_STORAGE_KEY = "corpusflow.userEmail";
@@ -42,7 +44,7 @@ export type ApiTask = {
   status: "running" | "completed" | "idle";
   active?: boolean;
   businessType?: "evaluation" | "training";
-  workMode?: "quick" | "advanced";
+  workMode?: "quick" | "advanced" | "evaluation";
 };
 
 export const apiService = {
@@ -92,7 +94,7 @@ export const apiService = {
   async createTask(payload: {
     name: string;
     businessType?: "evaluation" | "training";
-    workMode?: "quick" | "advanced";
+    workMode?: "quick" | "advanced" | "evaluation";
   }) {
     return request<ApiTask>("/api/tasks", {
       method: "POST",
@@ -233,6 +235,64 @@ export const apiService = {
         method: "POST",
         body: JSON.stringify(payload),
       },
+    );
+  },
+
+  async createEvaluationTask(payload: { name?: string } = {}) {
+    return request<ApiTask>("/api/evaluation/tasks", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getEvaluationSnapshot(taskId: string) {
+    return request<EvaluationSnapshot | null>(`/api/evaluation/tasks/${taskId}`);
+  },
+
+  async loadEvaluationSample(taskId: string) {
+    return request<EvaluationSnapshot>(`/api/evaluation/tasks/${taskId}/sample`, {
+      method: "POST",
+    });
+  },
+
+  async parseEvaluationRows(taskId: string, payload: {
+    sourceFile: string;
+    rows: Array<Record<string, unknown>>;
+  }) {
+    return request<EvaluationSnapshot>(`/api/evaluation/tasks/${taskId}/parse`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateEvaluationCluster(taskId: string, clusterId: string, payload: {
+    status?: ClusterDecisionStatus;
+    strategy?: Partial<ProblemCluster["recommendedStrategy"]>;
+  }) {
+    return request<EvaluationSnapshot>(
+      `/api/evaluation/tasks/${taskId}/clusters/${encodeURIComponent(clusterId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async previewEvaluationAssets(taskId: string) {
+    return request<EvaluationSnapshot>(`/api/evaluation/tasks/${taskId}/preview`, {
+      method: "POST",
+    });
+  },
+
+  async generateEvaluationPackage(taskId: string) {
+    return request<EvaluationSnapshot>(`/api/evaluation/tasks/${taskId}/package`, {
+      method: "POST",
+    });
+  },
+
+  async downloadEvaluationAsset(taskId: string, fileName: string) {
+    return request<{ fileName: string; content: string; recordCount: number }>(
+      `/api/evaluation/tasks/${taskId}/download/${encodeURIComponent(fileName)}`,
     );
   },
 };

@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background: #12121a;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+@media (min-width: 760px) and (max-width: 818px) {
+  .evaluation-control-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
 @keyframes quick-progress-scan {
   0% {
     transform: translateX(-120%);

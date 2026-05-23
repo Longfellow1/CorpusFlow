@@ -4,6 +4,18 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
+import {
+  attachAssetPackage,
+  attachPreview,
+  createDemoEvaluationSnapshot,
+  createEvaluationSnapshotFromRows,
+  serializeEvalAssetFile,
+  setClusterStatus,
+  updateClusterStrategy,
+  type ClusterDecisionStatus,
+  type EvaluationSnapshot,
+  type ProblemCluster,
+} from "./src/utils/evaluationMode.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,7 +55,7 @@ type Task = {
   status: "running" | "completed" | "idle";
   active?: boolean;
   businessType?: "evaluation" | "training";
-  workMode?: "quick" | "advanced";
+  workMode?: "quick" | "advanced" | "evaluation";
 };
 
 function ensureDataDir() {
@@ -130,6 +142,28 @@ function getGeneratedFile(taskId: string) {
 
 function getWorkspaceFile(taskId: string) {
   return path.join(DATA_DIR, `workspace_${taskId}.json`);
+}
+
+function updateTaskStatus(taskId: string, userId: string, status: Task["status"]) {
+  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  const updated = allTasks.map((task) => (
+    task.id === taskId && task.userId === userId ? { ...task, status } : task
+  ));
+  saveTasks(updated);
+}
+
+function readEvaluationSnapshot(taskId: string) {
+  return readJsonFile<EvaluationSnapshot | null>(getWorkspaceFile(taskId), null);
+}
+
+async function writeEvaluationSnapshot(taskId: string, snapshot: EvaluationSnapshot) {
+  await writeJsonFileLocked(getWorkspaceFile(taskId), snapshot);
+}
+
+function assertRowsPayload(rows: unknown): rows is Record<string, unknown>[] {
+  return Array.isArray(rows)
+    && rows.length <= 1000
+    && rows.every((row) => Boolean(row) && typeof row === "object" && !Array.isArray(row));
 }
 
 function assertTaskOwner(taskId: string, userId: string, res: express.Response): boolean {
@@ -328,6 +362,135 @@ async function startServer() {
     }
     await writeJsonFileLocked(getWorkspaceFile(req.params.taskId), req.body);
     return res.json(req.body);
+  });
+
+  app.post("/api/evaluation/tasks", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+    const now = new Date();
+    const task: Task = {
+      id: `eval-${Date.now()}`,
+      userId,
+      name: String(req.body?.name || `评测任务-${now.toLocaleTimeString()}`),
+      time: now.toISOString().split("T")[0],
+      status: "idle",
+      businessType: "evaluation",
+      workMode: "evaluation",
+    };
+    saveTasks([
+      task,
+      ...allTasks.map((item) => (
+        item.userId === userId ? { ...item, active: false } : item
+      )),
+    ]);
+    return res.json(task);
+  });
+
+  app.get("/api/evaluation/tasks/:taskId", (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    return res.json(readEvaluationSnapshot(req.params.taskId));
+  });
+
+  app.post("/api/evaluation/tasks/:taskId/sample", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const snapshot = createDemoEvaluationSnapshot(req.params.taskId);
+    await writeEvaluationSnapshot(req.params.taskId, snapshot);
+    updateTaskStatus(req.params.taskId, userId, "completed");
+    return res.json(snapshot);
+  });
+
+  app.post("/api/evaluation/tasks/:taskId/parse", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const rows = req.body?.rows;
+    if (!assertRowsPayload(rows)) {
+      return res.status(400).json({ error: "rows 必须是 1000 条以内的对象数组" });
+    }
+    const sourceFile = String(req.body?.sourceFile || "uploaded_eval_evidence");
+    const snapshot = createEvaluationSnapshotFromRows({
+      taskId: req.params.taskId,
+      sourceFile,
+      rows,
+    });
+    await writeEvaluationSnapshot(req.params.taskId, snapshot);
+    updateTaskStatus(req.params.taskId, userId, "completed");
+    return res.json(snapshot);
+  });
+
+  app.patch("/api/evaluation/tasks/:taskId/clusters/:clusterId", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    if (!snapshot) {
+      return res.status(404).json({ error: "评测任务尚未解析" });
+    }
+
+    let nextSnapshot = snapshot;
+    const status = req.body?.status as ClusterDecisionStatus | undefined;
+    if (status !== undefined) {
+      if (!["accepted", "rejected", "pending"].includes(status)) {
+        return res.status(400).json({ error: "status 必须是 accepted、rejected 或 pending" });
+      }
+      nextSnapshot = setClusterStatus(nextSnapshot, req.params.clusterId, status);
+    }
+
+    const strategy = req.body?.strategy as Partial<ProblemCluster["recommendedStrategy"]> | undefined;
+    if (strategy !== undefined) {
+      if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) {
+        return res.status(400).json({ error: "strategy 必须是对象" });
+      }
+      nextSnapshot = updateClusterStrategy(nextSnapshot, req.params.clusterId, strategy);
+    }
+
+    await writeEvaluationSnapshot(req.params.taskId, nextSnapshot);
+    return res.json(nextSnapshot);
+  });
+
+  app.post("/api/evaluation/tasks/:taskId/preview", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    if (!snapshot) {
+      return res.status(404).json({ error: "评测任务尚未解析" });
+    }
+    const nextSnapshot = attachPreview(snapshot);
+    await writeEvaluationSnapshot(req.params.taskId, nextSnapshot);
+    return res.json(nextSnapshot);
+  });
+
+  app.post("/api/evaluation/tasks/:taskId/package", async (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    if (!snapshot) {
+      return res.status(404).json({ error: "评测任务尚未解析" });
+    }
+    const nextSnapshot = attachAssetPackage(snapshot);
+    await writeEvaluationSnapshot(req.params.taskId, nextSnapshot);
+    updateTaskStatus(req.params.taskId, userId, "completed");
+    return res.json(nextSnapshot);
+  });
+
+  app.get("/api/evaluation/tasks/:taskId/download/:fileName", (req, res) => {
+    const userId = getUserIdFromAuth(req);
+    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    const assetPackage = snapshot?.package;
+    if (!snapshot || !assetPackage) {
+      return res.status(404).json({ error: "请先生成资产包" });
+    }
+    try {
+      const content = serializeEvalAssetFile(assetPackage, req.params.fileName);
+      return res.json({
+        fileName: req.params.fileName,
+        content,
+        recordCount: assetPackage.files[req.params.fileName] ?? 1,
+      });
+    } catch (error) {
+      return res.status(404).json({ error: error instanceof Error ? error.message : "资产文件不存在" });
+    }
   });
 
   app.post("/api/algorithm/analyze", async (req, res) => {
