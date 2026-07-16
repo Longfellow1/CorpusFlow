@@ -89,6 +89,7 @@ import {
   type ProblemCluster,
 } from "./utils/evaluationMode";
 import { withMinimumDuration } from "./utils/timing";
+import { I18nProvider, useI18n, type Locale } from "./i18n";
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -242,18 +243,21 @@ function getTaskView(task: Task): View {
   return "fine-tune";
 }
 
-function getTaskBadge(task: Task) {
+function getTaskBadge(task: Task, locale: Locale = "zh-CN") {
+  const labels = locale === "en-US"
+    ? { evaluation: "Evaluation", quick: "Batch", fineTune: "Fine-tune" }
+    : { evaluation: "评测增强", quick: "批量任务", fineTune: "精调生成" };
   const view = getTaskView(task);
   if (view === "evaluation") {
-    return { label: "评测增强", className: "bg-cyan-500/10 text-cyan-300" };
+    return { label: labels.evaluation, className: "bg-cyan-500/10 text-cyan-300" };
   }
   if (view === "batch") {
-    return { label: "批量任务", className: "bg-sky-500/10 text-sky-400" };
+    return { label: labels.quick, className: "bg-sky-500/10 text-sky-400" };
   }
   if (view === "quick") {
-    return { label: "批量任务", className: "bg-emerald-500/10 text-emerald-400" };
+    return { label: labels.quick, className: "bg-emerald-500/10 text-emerald-400" };
   }
-  return { label: "精调生成", className: "bg-indigo-500/10 text-indigo-400" };
+  return { label: labels.fineTune, className: "bg-indigo-500/10 text-indigo-400" };
 }
 
 const MIN_EXPANSION_RATIO = 5;
@@ -343,7 +347,8 @@ function formatSavedAt(date: Date) {
   return `${month}-${day} ${hours}:${minutes}`;
 }
 
-export default function App() {
+function AppContent() {
+  const { locale, setLocale, t } = useI18n();
   const [view, setView] = useState<View>('home');
   const [activeTask, setActiveTask] = useState("");
   const [mode, setMode] = useState<"single" | "multi" | "instruct" | "quick">("single");
@@ -2252,12 +2257,12 @@ export default function App() {
           </div>
           <div className="hidden h-4 w-px bg-slate-700 mx-2 sm:block" />
           <div className="hidden items-center gap-2 text-sm font-medium text-slate-500 sm:flex">
-            <span className={cn("cursor-pointer hover:text-indigo-400 transition-colors", view === 'home' && "text-indigo-400")} onClick={() => navigateToView('home')}>首页</span>
+            <span className={cn("cursor-pointer hover:text-indigo-400 transition-colors", view === 'home' && "text-indigo-400")} onClick={() => navigateToView('home')}>{t("nav.home")}</span>
             {view !== 'home' && (
               <>
                 <ChevronLeft size={12} className="rotate-180" />
                 <span className="text-indigo-400">
-                  {view === 'fine-tune' ? '精调生成' : view === 'quick' ? '批量任务' : view === "evaluation" ? "评测增强" : '任务列表'}
+                  {view === 'fine-tune' ? t("nav.fineTune") : view === 'quick' ? t("nav.quick") : view === "evaluation" ? t("nav.evaluation") : t("nav.taskList")}
                 </span>
               </>
             )}
@@ -2320,6 +2325,24 @@ export default function App() {
         )}
 
         <div className="flex items-center justify-end gap-4">
+          <div className="flex items-center rounded-lg border border-slate-700 bg-slate-950/60 p-0.5 text-[11px] font-bold" role="group" aria-label={t("language.switch")}>
+            <button
+              type="button"
+              onClick={() => setLocale("zh-CN")}
+              className={cn("rounded-md px-2 py-1 transition-colors", locale === "zh-CN" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+              aria-pressed={locale === "zh-CN"}
+            >
+              {t("language.zh")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocale("en-US")}
+              className={cn("rounded-md px-2 py-1 transition-colors", locale === "en-US" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+              aria-pressed={locale === "en-US"}
+            >
+              {t("language.en")}
+            </button>
+          </div>
           {!isLoggedIn ? (
             <form
               onSubmit={handleLogin}
@@ -2345,7 +2368,7 @@ export default function App() {
                 <User size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
-                  placeholder="用户名/邮箱"
+                  placeholder={t("auth.email")}
                   value={tempEmail}
                   onChange={(e) => {
                     setTempEmail(e.target.value);
@@ -2357,7 +2380,7 @@ export default function App() {
               </div>
               <input
                 type="password"
-                placeholder="密码"
+                placeholder={t("auth.password")}
                 value={tempPassword}
                 onChange={(e) => {
                   setTempPassword(e.target.value);
@@ -2370,7 +2393,7 @@ export default function App() {
                 type="submit"
                 className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-[11px] font-bold transition-colors"
               >
-                登陆/注册
+                {t("auth.signIn")}
               </button>
             </form>
           ) : (
@@ -2385,7 +2408,7 @@ export default function App() {
                 onClick={handleLogout}
                 className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-red-400 transition-colors"
               >
-                <LogOut size={14} /> 退出
+                <LogOut size={14} /> {t("auth.signOut")}
               </button>
             </>
           )}
@@ -2426,8 +2449,8 @@ export default function App() {
                       <Edit3 size={40} />
                     </div>
                     <div className="text-center">
-                      <h2 className="text-xl font-bold text-white mb-2">精调生成</h2>
-                      <p className="text-base text-slate-500">深度解析、仿写、扩写，支持极速与高质量模式</p>
+                      <h2 className="text-xl font-bold text-white mb-2">{t("home.fineTune.title")}</h2>
+                      <p className="text-base text-slate-500">{t("home.fineTune.description")}</p>
                     </div>
                   </div>
 
@@ -2440,8 +2463,8 @@ export default function App() {
                       <FileText size={40} />
                     </div>
                     <div className="text-center">
-                      <h2 className="text-xl font-bold text-white mb-2">批量任务</h2>
-                      <p className="text-base text-slate-500">弱编辑、重吞吐，面向大批量生成与筛选</p>
+                      <h2 className="text-xl font-bold text-white mb-2">{t("home.quick.title")}</h2>
+                      <p className="text-base text-slate-500">{t("home.quick.description")}</p>
                     </div>
                   </div>
 
@@ -2453,8 +2476,8 @@ export default function App() {
                       <FileJson size={40} />
                     </div>
                     <div className="text-center">
-                      <h2 className="text-xl font-bold text-white mb-2">评测增强</h2>
-                      <p className="text-base text-slate-500">从 badcase 归因到修复数据资产包</p>
+                      <h2 className="text-xl font-bold text-white mb-2">{t("home.evaluation.title")}</h2>
+                      <p className="text-base text-slate-500">{t("home.evaluation.description")}</p>
                     </div>
                   </div>
                 </div>
@@ -2464,22 +2487,22 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
                       <History className="text-indigo-400" size={20} />
-                      任务列表
+                      {t("home.tasks.title")}
                     </h3>
                     <button
                       onClick={() => navigateToView('task-list')}
                       className="text-sm text-slate-500 hover:text-white transition-colors"
                     >
-                      查看全部任务
+                      {t("home.tasks.all")}
                     </button>
                   </div>
 
                   <div className="bg-[#1A1A27] border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
                     <div className="grid grid-cols-5 gap-4 p-4 border-b border-slate-800 text-[11px] font-bold text-slate-500 uppercase tracking-widest">
-                      <div className="col-span-2">任务名称</div>
-                      <div>类型</div>
-                      <div className="text-right">时间</div>
-                      <div className="text-right">操作</div>
+                      <div className="col-span-2">{t("home.tasks.name")}</div>
+                      <div>{t("home.tasks.type")}</div>
+                      <div className="text-right">{t("home.tasks.time")}</div>
+                      <div className="text-right">{t("home.tasks.actions")}</div>
                     </div>
                     <div className="divide-y divide-slate-800">
                       {tasks.slice(0, 5).map(task => (
@@ -2531,8 +2554,8 @@ export default function App() {
                             </div>
                           </div>
                           <div className="flex items-center">
-                            <span className={cn("px-2 py-0.5 rounded text-[11px] font-bold uppercase", getTaskBadge(task).className)}>
-                              {getTaskBadge(task).label}
+                            <span className={cn("px-2 py-0.5 rounded text-[11px] font-bold uppercase", getTaskBadge(task, locale).className)}>
+                              {getTaskBadge(task, locale).label}
                             </span>
                           </div>
                           <div className="flex min-w-0 items-center justify-end text-xs text-slate-500">
@@ -2991,8 +3014,8 @@ export default function App() {
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                            <span className={cn("px-2 py-1 rounded text-[11px] font-bold uppercase", getTaskBadge(task).className)}>
-                              {getTaskBadge(task).label}
+                            <span className={cn("px-2 py-1 rounded text-[11px] font-bold uppercase", getTaskBadge(task, locale).className)}>
+                              {getTaskBadge(task, locale).label}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-500">
@@ -4153,5 +4176,13 @@ export default function App() {
         }
       `}} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
   );
 }
