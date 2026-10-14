@@ -1,6 +1,8 @@
 # CorpusFlow
+<img width="3006" height="1582" alt="CorpusFlow corpus production workbench screenshot (1 of 2)" src="https://github.com/user-attachments/assets/663cbd90-f534-431e-b5d6-20368ab386eb" />
+<img width="2996" height="1586" alt="CorpusFlow corpus production workbench screenshot (2 of 2)" src="https://github.com/user-attachments/assets/d724e49e-6dc9-4224-8df8-22af0118f311" />
 
-> A corpus production workbench for fine-tuning and evaluation data: turn raw queries, badcases, FAQs, and seed examples into auditable training data you can export.
+> A corpus production workbench for LLM fine-tuning and evaluation data: turn raw queries, badcases, FAQs, and seed examples into auditable instruction-tuning (SFT) datasets you can export, in Alpaca, QA, and multi-turn formats.
 
 CorpusFlow is not a prompt playground. It turns "import raw data → detect fields → reject unsafe seeds → batch generate → review → export JSON/CSV/JSONL" into a repeatable workflow for teams that continuously prepare SFT, QA, multi-turn dialog, and evaluation datasets.
 
@@ -268,7 +270,7 @@ This prioritizes a stable demo URL. Express and FastAPI are not forced into Clou
 
 - Storage currently uses local JSON files, suitable for demos and small-team trials. Production deployments should move to a database or object store.
 - Generation depends on an external LLM API, so stability depends on service availability, network, and quota.
-- The README does not yet include a screenshot or GIF.
+- The README does not yet include a GIF walkthrough.
 - The repository does not yet include `CONTRIBUTING.md` or GitHub Actions workflows.
 
 ---

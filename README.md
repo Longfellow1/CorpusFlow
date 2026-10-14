@@ -1,9 +1,9 @@
 # CorpusFlow
-<img width="3006" height="1582" alt="028095fa811bb82e7318f801397b4410" src="https://github.com/user-attachments/assets/663cbd90-f534-431e-b5d6-20368ab386eb" />
-<img width="2996" height="1586" alt="7f31f77c052e63273be937f40a4e192b" src="https://github.com/user-attachments/assets/d724e49e-6dc9-4224-8df8-22af0118f311" />
+<img width="3006" height="1582" alt="CorpusFlow 数据生产工作台截图（1/2）" src="https://github.com/user-attachments/assets/663cbd90-f534-431e-b5d6-20368ab386eb" />
+<img width="2996" height="1586" alt="CorpusFlow 数据生产工作台截图（2/2）" src="https://github.com/user-attachments/assets/d724e49e-6dc9-4224-8df8-22af0118f311" />
 
 
-> 面向微调和评测的数据生产工作台：把零散的 query、badcase、FAQ 和种子样本，批量转成可审计、可导出的训练数据。
+> 面向大模型微调和评测的数据生产工作台：把零散的 query、badcase、FAQ 和种子样本，批量转成可审计、可导出的指令微调（SFT）数据集，支持 Alpaca、QA 和多轮对话格式。
 
 CorpusFlow 不是一个 Prompt 游乐场。它把“导入原始数据 → 字段识别 → 敏感拒识 → 批量生成 → 人工复核 → JSON/CSV/JSONL 导出”做成一条可重复的工作流，服务于需要持续准备 SFT、QA、多轮对话和评测数据的算法、测试与业务团队。
 
@@ -305,7 +305,7 @@ Cloudflare Pages
 
 - 当前存储以本地 JSON 文件为主，适合演示和小团队内测；生产化建议迁移到数据库或对象存储。
 - 算法服务依赖外部 LLM API，生成稳定性受模型服务、网络和 API key 配额影响。
-- README 暂未包含正式截图或 GIF；建议后续补一张快速任务结果页截图。
+- README 暂未包含 GIF 演示。
 - 仓库暂未提供 CONTRIBUTING.md 和 GitHub Actions 工作流。
 
 ---
