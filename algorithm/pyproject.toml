@@ -3,12 +3,17 @@ name = "corpusflow-algorithm"
 version = "0.1.0"
 description = "CorpusFlow algorithm core service"
 requires-python = ">=3.11"
+keywords = ["fine-tuning", "sft", "instruction-tuning", "dataset-generation", "synthetic-data", "llm", "fastapi"]
 dependencies = [
   "fastapi>=0.115.0",
   "httpx>=0.28.0",
   "python-dotenv>=1.1.0",
   "uvicorn>=0.34.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/Longfellow1/CorpusFlow"
+Issues = "https://github.com/Longfellow1/CorpusFlow/issues"
 
 [tool.uv]
 package = false
