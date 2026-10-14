@@ -306,7 +306,7 @@ Cloudflare Pages
 - 当前存储以本地 JSON 文件为主，适合演示和小团队内测；生产化建议迁移到数据库或对象存储。
 - 算法服务依赖外部 LLM API，生成稳定性受模型服务、网络和 API key 配额影响。
 - README 暂未包含 GIF 演示。
-- 仓库暂未提供 CONTRIBUTING.md 和 GitHub Actions 工作流。
+- 仓库暂未提供 GitHub Actions 工作流。
 
 ---
 
@@ -334,7 +334,7 @@ Cloudflare Pages
 - 更多训练数据格式适配
 - 演示样例、文档和部署脚本
 
-正式贡献指南待补充：`TODO: add CONTRIBUTING.md`。
+环境准备、提交前检查和问题反馈方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

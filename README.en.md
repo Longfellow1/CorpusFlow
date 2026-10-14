@@ -271,7 +271,7 @@ This prioritizes a stable demo URL. Express and FastAPI are not forced into Clou
 - Storage currently uses local JSON files, suitable for demos and small-team trials. Production deployments should move to a database or object store.
 - Generation depends on an external LLM API, so stability depends on service availability, network, and quota.
 - The README does not yet include a GIF walkthrough.
-- The repository does not yet include `CONTRIBUTING.md` or GitHub Actions workflows.
+- The repository does not yet include GitHub Actions workflows.
 
 ---
 
@@ -299,7 +299,7 @@ Issues and PRs are welcome, especially for:
 - Additional training data format adapters
 - Demo samples, docs, and deployment scripts
 
-Formal contribution guide: `TODO: add CONTRIBUTING.md`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and how to report issues.
 
 ---
 
