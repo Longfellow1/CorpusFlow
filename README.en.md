@@ -95,7 +95,7 @@ All formats export to **JSON / CSV / JSONL**. CSV export escapes formula prefixe
 ### Local development
 
 ```bash
-git clone https://github.com/Longfellow1/CorpusFlow-.git
+git clone https://github.com/Longfellow1/CorpusFlow.git
 cd CorpusFlow
 
 bash setup.sh

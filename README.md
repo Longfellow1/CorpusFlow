@@ -132,7 +132,7 @@ CorpusFlow 会自动完成：
 ### 本地开发
 
 ```bash
-git clone https://github.com/Longfellow1/CorpusFlow-.git
+git clone https://github.com/Longfellow1/CorpusFlow.git
 cd CorpusFlow
 
 bash setup.sh
