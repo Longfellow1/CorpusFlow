@@ -317,3 +317,4 @@ Copyright 2026 Harland.
 
 - Email: Harland5588@outlook.com
 - GitHub: [@Longfellow1](https://github.com/Longfellow1)
+- Other projects: [KeyPulse](https://github.com/Longfellow1/keypulse) (local memory layer for AI agents, served over MCP) · [Principled-Simplicity-skill](https://github.com/Longfellow1/Principled-Simplicity-skill) (mechanism-level fix skill for agent runtimes) · [Product-Judgment-skill](https://github.com/Longfellow1/Product-Judgment-skill) (demand-review skill: judge the demand before the PRD)

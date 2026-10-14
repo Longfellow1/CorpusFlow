@@ -352,3 +352,4 @@ Copyright 2026 Harland.
 
 - 邮箱: Harland5588@outlook.com
 - GitHub: [@Longfellow1](https://github.com/Longfellow1)
+- 其他项目：[KeyPulse](https://github.com/Longfellow1/keypulse)（给 AI Agent 用的本地记忆层，经 MCP 提供）· [Principled-Simplicity-skill](https://github.com/Longfellow1/Principled-Simplicity-skill)（大道至简：Agent runtime 机制层修复 Skill）· [Product-Judgment-skill](https://github.com/Longfellow1/Product-Judgment-skill)（产品判断：先判断需求，再写 PRD）
