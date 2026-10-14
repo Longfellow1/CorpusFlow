@@ -1,6 +1,8 @@
 # CorpusFlow
+<img width="3006" height="1582" alt="CorpusFlow corpus production workbench screenshot (1 of 2)" src="https://github.com/user-attachments/assets/663cbd90-f534-431e-b5d6-20368ab386eb" />
+<img width="2996" height="1586" alt="CorpusFlow corpus production workbench screenshot (2 of 2)" src="https://github.com/user-attachments/assets/d724e49e-6dc9-4224-8df8-22af0118f311" />
 
-> A corpus production workbench for fine-tuning and evaluation data: turn raw queries, badcases, FAQs, and seed examples into auditable training data you can export.
+> A corpus production workbench for LLM fine-tuning and evaluation data: turn raw queries, badcases, FAQs, and seed examples into auditable instruction-tuning (SFT) datasets you can export, in Alpaca, QA, and multi-turn formats.
 
 CorpusFlow is not a prompt playground. It turns "import raw data → detect fields → reject unsafe seeds → batch generate → review → export JSON/CSV/JSONL" into a repeatable workflow for teams that continuously prepare SFT, QA, multi-turn dialog, and evaluation datasets.
 
@@ -95,7 +97,7 @@ All formats export to **JSON / CSV / JSONL**. CSV export escapes formula prefixe
 ### Local development
 
 ```bash
-git clone https://github.com/Longfellow1/CorpusFlow-.git
+git clone https://github.com/Longfellow1/CorpusFlow.git
 cd CorpusFlow
 
 bash setup.sh
@@ -268,8 +270,8 @@ This prioritizes a stable demo URL. Express and FastAPI are not forced into Clou
 
 - Storage currently uses local JSON files, suitable for demos and small-team trials. Production deployments should move to a database or object store.
 - Generation depends on an external LLM API, so stability depends on service availability, network, and quota.
-- The README does not yet include a screenshot or GIF.
-- The repository does not yet include `CONTRIBUTING.md` or GitHub Actions workflows.
+- The README does not yet include a GIF walkthrough.
+- The repository does not yet include GitHub Actions workflows.
 
 ---
 
@@ -297,7 +299,7 @@ Issues and PRs are welcome, especially for:
 - Additional training data format adapters
 - Demo samples, docs, and deployment scripts
 
-Formal contribution guide: `TODO: add CONTRIBUTING.md`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and how to report issues.
 
 ---
 
@@ -315,3 +317,4 @@ Copyright 2026 Harland.
 
 - Email: Harland5588@outlook.com
 - GitHub: [@Longfellow1](https://github.com/Longfellow1)
+- Other projects: [KeyPulse](https://github.com/Longfellow1/keypulse) (local memory layer for AI agents, served over MCP) · [Principled-Simplicity-skill](https://github.com/Longfellow1/Principled-Simplicity-skill) (mechanism-level fix skill for agent runtimes) · [Product-Judgment-skill](https://github.com/Longfellow1/Product-Judgment-skill) (demand-review skill: judge the demand before the PRD)

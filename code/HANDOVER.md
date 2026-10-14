@@ -1,5 +1,7 @@
 # CorpusFlow 开发交接文档 (Handover Record)
 
+> 历史记录（2026-04-08，AI Studio 原型阶段）。文中的 Gemini / `@google/genai` 描述的是当时的前端原型；当前大模型提供方为 Ark / Doubao（见 `algorithm/src/app.py`），以根目录 [README.md](../README.md) 为准。
+
 ## 1. 项目概述
 CorpusFlow 是一个专为 AI 训练语料设计的生成与管理平台。它支持从种子 Query 出发，通过大模型（Gemini）进行深度语义解析、多维仿写、多轮对话生成以及指令微调数据的构建。
 

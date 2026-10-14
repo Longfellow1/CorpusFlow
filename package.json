@@ -1,7 +1,28 @@
 {
-  "name": "react-example",
+  "name": "corpusflow",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "A corpus production workbench for LLM fine-tuning and evaluation data: turn raw queries, badcases, FAQs, and seed examples into auditable instruction-tuning (SFT) datasets you can export, in Alpaca, QA, and multi-turn formats.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Longfellow1/CorpusFlow.git"
+  },
+  "homepage": "https://github.com/Longfellow1/CorpusFlow#readme",
+  "bugs": {
+    "url": "https://github.com/Longfellow1/CorpusFlow/issues"
+  },
+  "keywords": [
+    "fine-tuning",
+    "instruction-tuning",
+    "sft",
+    "dataset-generation",
+    "synthetic-data",
+    "evaluation",
+    "llm",
+    "alpaca",
+    "sharegpt"
+  ],
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
