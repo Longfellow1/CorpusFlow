@@ -205,7 +205,7 @@ export function createEmptyQuickWorkspaceState(): QuickWorkspaceState {
     quickWarnings: [],
     quickTargetPerSeed: 5,
     quickFilterStrength: "medium",
-    quickConcurrency: 4,
+    quickConcurrency: 8,
     quickRunStatus: "idle",
     quickRunStats: null,
     quickRunProgress: null,

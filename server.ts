@@ -1,9 +1,11 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
+import type { Pool } from "pg";
 import {
   attachAssetPackage,
   attachPreview,
@@ -24,26 +26,77 @@ dotenv.config({ path: path.join(process.cwd(), ".env.local"), override: true });
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
 const JWT_SECRET = process.env.JWT_SECRET || "corpusflow-dev-secret-change-in-prod";
 const JWT_EXPIRES_IN = "7d";
 let ALGORITHM_BASE = process.env.ALGORITHM_BASE_URL || "http://127.0.0.1:8001";
+type StorageBackend = "file" | "postgres";
+const STORAGE_BACKEND: StorageBackend = process.env.STORAGE_BACKEND === "postgres"
+  ? "postgres"
+  : process.env.STORAGE_BACKEND === "file"
+    ? "file"
+    : process.env.DATABASE_URL
+      ? "postgres"
+      : "file";
+const PASSWORD_HASH_ITERATIONS = 210_000;
+const EVALUATION_ALGORITHM_LLM_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(process.env.EVALUATION_LLM_ENABLED || "").toLowerCase(),
+);
 const EXTRA_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+function getAlgorithmPortFileBase(): string | null {
+  const portFile = path.join(DATA_DIR, "algorithm.port");
+  if (!fs.existsSync(portFile)) return null;
+  const port = fs.readFileSync(portFile, "utf-8").trim();
+  if (!port || isNaN(Number(port))) return null;
+  return `http://127.0.0.1:${port}`;
+}
+
+function uniqueAlgorithmBases(values: Array<string | null | undefined>): string[] {
+  const bases: string[] = [];
+  for (const value of values) {
+    if (!value || bases.includes(value)) continue;
+    bases.push(value);
+  }
+  return bases;
+}
+
+async function getAlgorithmHealth(baseUrl: string): Promise<Record<string, unknown> | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 700);
+  try {
+    const response = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    if (payload?.ok !== true || typeof payload.provider !== "string") return null;
+    return payload;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function resolveAlgorithmBase(): Promise<string> {
   if (process.env.ALGORITHM_BASE_URL) return process.env.ALGORITHM_BASE_URL;
-  const portFile = path.join(DATA_DIR, "algorithm.port");
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    if (fs.existsSync(portFile)) {
-      const port = fs.readFileSync(portFile, "utf-8").trim();
-      if (port && !isNaN(Number(port))) return `http://127.0.0.1:${port}`;
+    const candidates = uniqueAlgorithmBases([
+      getAlgorithmPortFileBase(),
+      ALGORITHM_BASE,
+      "http://127.0.0.1:8001",
+      "http://127.0.0.1:8000",
+    ]);
+    for (const candidate of candidates) {
+      const health = await getAlgorithmHealth(candidate);
+      if (health) return candidate;
     }
     await new Promise((r) => setTimeout(r, 200));
   }
-  return "http://127.0.0.1:8001";
+  return getAlgorithmPortFileBase() || "http://127.0.0.1:8001";
 }
 const PORT = Number(process.env.PORT || 3000);
 
@@ -58,12 +111,138 @@ type Task = {
   workMode?: "quick" | "advanced" | "evaluation";
 };
 
+type UserRecord = {
+  id: string;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  createdAt?: string;
+};
+
+type TaskPayloadKind = "seeds" | "generated" | "workspace";
+
+type EvaluationAlgorithmAssetResponse = {
+  snapshot?: EvaluationSnapshot;
+  package?: EvaluationSnapshot["package"];
+};
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
   if (!fs.existsSync(TASKS_FILE)) {
     fs.writeFileSync(TASKS_FILE, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify([], null, 2));
+  }
+}
+
+let pgPool: Pool | null = null;
+
+function getPasswordHash(password: string, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.pbkdf2Sync(password, salt, PASSWORD_HASH_ITERATIONS, 32, "sha256").toString("hex");
+  return `pbkdf2_sha256$${PASSWORD_HASH_ITERATIONS}$${salt}$${hash}`;
+}
+
+function verifyPassword(password: string, passwordHash: string) {
+  const [algorithm, iterationsRaw, salt, expectedHash] = passwordHash.split("$");
+  if (algorithm !== "pbkdf2_sha256" || !iterationsRaw || !salt || !expectedHash) return false;
+  const iterations = Number(iterationsRaw);
+  if (!Number.isInteger(iterations) || iterations < 100_000) return false;
+  const actual = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+async function getPgPool() {
+  if (pgPool) return pgPool;
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required when STORAGE_BACKEND=postgres");
+  }
+  const pg = await import("pg");
+  const PoolCtor = pg.Pool ?? (pg.default as typeof pg).Pool;
+  const sslMode = process.env.DATABASE_SSL_MODE || "auto";
+  const useSsl = sslMode === "require" || (sslMode === "auto" && process.env.NODE_ENV === "production");
+  pgPool = new PoolCtor({
+    connectionString: process.env.DATABASE_URL,
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    max: Number(process.env.DATABASE_POOL_MAX || 5),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+  return pgPool;
+}
+
+async function initPostgresStorage() {
+  const pool = await getPgPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id text PRIMARY KEY,
+      email text UNIQUE NOT NULL,
+      display_name text NOT NULL,
+      password_hash text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id text PRIMARY KEY,
+      user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      time text NOT NULL,
+      status text NOT NULL CHECK (status IN ('running', 'completed', 'idle')),
+      active boolean NOT NULL DEFAULT false,
+      business_type text CHECK (business_type IN ('evaluation', 'training')),
+      work_mode text CHECK (work_mode IN ('quick', 'advanced', 'evaluation')),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS tasks_user_id_created_at_idx ON tasks(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS task_payloads (
+      task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      kind text NOT NULL CHECK (kind IN ('seeds', 'generated', 'workspace')),
+      payload jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (task_id, kind)
+    );
+  `);
+}
+
+async function initStorage() {
+  if (STORAGE_BACKEND === "postgres") {
+    await initPostgresStorage();
+    return;
+  }
+  ensureDataDir();
+}
+
+async function getStorageHealth() {
+  if (STORAGE_BACKEND === "postgres") {
+    try {
+      const pool = await getPgPool();
+      await pool.query("SELECT 1");
+      return { ok: true, backend: "postgres" };
+    } catch (error) {
+      return {
+        ok: false,
+        backend: "postgres",
+        error: error instanceof Error ? error.message : "postgres unavailable",
+      };
+    }
+  }
+  try {
+    ensureDataDir();
+    fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
+    return { ok: true, backend: "file" };
+  } catch (error) {
+    return {
+      ok: false,
+      backend: "file",
+      error: error instanceof Error ? error.message : "file storage unavailable",
+    };
   }
 }
 
@@ -81,10 +260,6 @@ function readJsonFile<T>(file: string, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function writeJsonFile(file: string, value: unknown) {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
 function escapeCsvField(val: unknown): string {
@@ -111,25 +286,132 @@ async function writeJsonFileLocked(file: string, value: unknown): Promise<void> 
   }
 }
 
-function getUserIdFromAuth(req: express.Request): string {
+function toTask(row: Record<string, unknown>): Task {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    name: String(row.name),
+    time: String(row.time),
+    status: row.status as Task["status"],
+    active: Boolean(row.active),
+    businessType: row.business_type as Task["businessType"],
+    workMode: row.work_mode as Task["workMode"],
+  };
+}
+
+function normalizeBusinessType(value: unknown): Task["businessType"] {
+  return value === "training" ? "training" : "evaluation";
+}
+
+function normalizeWorkMode(value: unknown): Task["workMode"] {
+  return value === "quick" || value === "evaluation" ? value : "advanced";
+}
+
+async function authenticateOrCreateUser(email: string, password: string): Promise<UserRecord> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    const existing = await pool.query<{
+      id: string;
+      email: string;
+      display_name: string;
+      password_hash: string;
+      created_at: Date;
+    }>(
+      "SELECT id, email, display_name, password_hash, created_at FROM users WHERE email = $1",
+      [email],
+    );
+    const current = existing.rows[0];
+    if (current) {
+      if (current.password_hash === "unclaimed") {
+        const passwordHash = getPasswordHash(password);
+        await pool.query(
+          "UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1",
+          [current.id, passwordHash],
+        );
+        return {
+          id: current.id,
+          email: current.email,
+          displayName: current.display_name,
+          passwordHash,
+          createdAt: current.created_at.toISOString(),
+        };
+      }
+      if (!verifyPassword(password, current.password_hash)) {
+        throw new Error("invalid credentials");
+      }
+      return {
+        id: current.id,
+        email: current.email,
+        displayName: current.display_name,
+        passwordHash: current.password_hash,
+        createdAt: current.created_at.toISOString(),
+      };
+    }
+
+    const user: UserRecord = {
+      id: email,
+      email,
+      displayName: email,
+      passwordHash: getPasswordHash(password),
+    };
+    await pool.query(
+      `INSERT INTO users (id, email, display_name, password_hash)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, user.email, user.displayName, user.passwordHash],
+    );
+    return user;
+  }
+
+  ensureDataDir();
+  const users = readJsonFile<UserRecord[]>(USERS_FILE, []);
+  const current = users.find((user) => user.email === email);
+  if (current) {
+    if (!verifyPassword(password, current.passwordHash)) {
+      throw new Error("invalid credentials");
+    }
+    return current;
+  }
+  const user: UserRecord = {
+    id: email,
+    email,
+    displayName: email,
+    passwordHash: getPasswordHash(password),
+    createdAt: new Date().toISOString(),
+  };
+  await writeJsonFileLocked(USERS_FILE, [user, ...users]);
+  return user;
+}
+
+async function ensureUserExists(userId: string): Promise<void> {
+  if (STORAGE_BACKEND !== "postgres") return;
+  const pool = await getPgPool();
+  await pool.query(
+    `INSERT INTO users (id, email, display_name, password_hash)
+     VALUES ($1, $1, $1, 'unclaimed')
+     ON CONFLICT (id) DO NOTHING`,
+    [userId],
+  );
+}
+
+function getUserIdFromAuth(req: express.Request): string | null {
   const auth = req.headers.authorization || "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
-  if (!token) return "guest@example.com";
+  if (!token) return null;
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { sub: string };
     return payload.sub;
   } catch {
-    return "guest@example.com";
+    return null;
   }
 }
 
-function listTasks(userId: string) {
-  const tasks = readJsonFile<Task[]>(TASKS_FILE, []);
-  return tasks.filter((task) => task.userId === userId);
-}
-
-function saveTasks(tasks: Task[]) {
-  writeJsonFile(TASKS_FILE, tasks);
+function requireUserId(req: express.Request, res: express.Response): string | null {
+  const userId = getUserIdFromAuth(req);
+  if (!userId) {
+    res.status(401).json({ error: "请先登录" });
+    return null;
+  }
+  return userId;
 }
 
 function getSeedFile(taskId: string) {
@@ -144,40 +426,222 @@ function getWorkspaceFile(taskId: string) {
   return path.join(DATA_DIR, `workspace_${taskId}.json`);
 }
 
-function updateTaskStatus(taskId: string, userId: string, status: Task["status"]) {
-  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
-  const updated = allTasks.map((task) => (
-    task.id === taskId && task.userId === userId ? { ...task, status } : task
-  ));
-  saveTasks(updated);
-}
-
-function readEvaluationSnapshot(taskId: string) {
-  return readJsonFile<EvaluationSnapshot | null>(getWorkspaceFile(taskId), null);
-}
-
-async function writeEvaluationSnapshot(taskId: string, snapshot: EvaluationSnapshot) {
-  await writeJsonFileLocked(getWorkspaceFile(taskId), snapshot);
-}
-
 function assertRowsPayload(rows: unknown): rows is Record<string, unknown>[] {
   return Array.isArray(rows)
     && rows.length <= 1000
     && rows.every((row) => Boolean(row) && typeof row === "object" && !Array.isArray(row));
 }
 
-function assertTaskOwner(taskId: string, userId: string, res: express.Response): boolean {
+function validateEvaluationStrategyPatch(strategy: Partial<ProblemCluster["recommendedStrategy"]>): string | null {
+  if (strategy.assetType !== undefined && !["training_candidates", "eval_cases", "negative_cases"].includes(String(strategy.assetType))) {
+    return "assetType 必须是 training_candidates、eval_cases 或 negative_cases";
+  }
+  if (strategy.schema !== undefined && !["alpaca", "sharegpt_history", "eval_case_jsonl"].includes(String(strategy.schema))) {
+    return "schema 必须是 alpaca、sharegpt_history 或 eval_case_jsonl";
+  }
+  if (strategy.count !== undefined) {
+    if (typeof strategy.count !== "number" || !Number.isFinite(strategy.count) || strategy.count < 0 || strategy.count > 200) {
+      return "count 必须是 0 到 200 之间的数字";
+    }
+  }
+  if (strategy.solution !== undefined && (typeof strategy.solution !== "string" || strategy.solution.length > 2000)) {
+    return "solution 必须是 2000 字以内的字符串";
+  }
+  if (strategy.strategyTemplate !== undefined && (typeof strategy.strategyTemplate !== "string" || strategy.strategyTemplate.length > 2000)) {
+    return "strategyTemplate 必须是 2000 字以内的字符串";
+  }
+  return null;
+}
+
+async function listTasks(userId: string): Promise<Task[]> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    const result = await pool.query(
+      `SELECT id, user_id, name, time, status, active, business_type, work_mode
+       FROM tasks
+       WHERE user_id = $1
+       ORDER BY created_at DESC, id DESC`,
+      [userId],
+    );
+    return result.rows.map((row) => toTask(row));
+  }
   const tasks = readJsonFile<Task[]>(TASKS_FILE, []);
-  const task = tasks.find((t) => t.id === taskId);
-  if (!task || task.userId !== userId) {
+  return tasks.filter((task) => task.userId === userId);
+}
+
+async function createTask(task: Task): Promise<Task> {
+  const nextTask = { ...task, active: true };
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    await ensureUserExists(nextTask.userId);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("UPDATE tasks SET active = false, updated_at = now() WHERE user_id = $1", [task.userId]);
+      await client.query(
+        `INSERT INTO tasks (id, user_id, name, time, status, active, business_type, work_mode)
+         VALUES ($1, $2, $3, $4, $5, true, $6, $7)`,
+        [
+          nextTask.id,
+          nextTask.userId,
+          nextTask.name,
+          nextTask.time,
+          nextTask.status,
+          nextTask.businessType,
+          nextTask.workMode,
+        ],
+      );
+      await client.query("COMMIT");
+      return nextTask;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  const updated = [
+    nextTask,
+    ...allTasks.map((item) =>
+      item.userId === nextTask.userId ? { ...item, active: false } : item,
+    ),
+  ];
+  await writeJsonFileLocked(TASKS_FILE, updated);
+  return nextTask;
+}
+
+async function updateTaskName(taskId: string, userId: string, name: string): Promise<Task | null> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    const result = await pool.query(
+      `UPDATE tasks
+       SET name = $3, updated_at = now()
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, user_id, name, time, status, active, business_type, work_mode`,
+      [taskId, userId, name],
+    );
+    return result.rows[0] ? toTask(result.rows[0]) : null;
+  }
+  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  const task = allTasks.find((item) => item.id === taskId && item.userId === userId);
+  if (!task) return null;
+  const updatedTask = { ...task, name };
+  await writeJsonFileLocked(TASKS_FILE, allTasks.map((item) => (item.id === task.id ? updatedTask : item)));
+  return updatedTask;
+}
+
+async function deleteTask(taskId: string, userId: string): Promise<void> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    await pool.query("DELETE FROM tasks WHERE id = $1 AND user_id = $2", [taskId, userId]);
+    return;
+  }
+  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  const nextTasks = allTasks.filter(
+    (task) => !(task.userId === userId && task.id === taskId),
+  );
+  await writeJsonFileLocked(TASKS_FILE, nextTasks);
+  const seedFile = getSeedFile(taskId);
+  const genFile = getGeneratedFile(taskId);
+  const workspaceFile = getWorkspaceFile(taskId);
+  if (fs.existsSync(seedFile)) fs.unlinkSync(seedFile);
+  if (fs.existsSync(genFile)) fs.unlinkSync(genFile);
+  if (fs.existsSync(workspaceFile)) fs.unlinkSync(workspaceFile);
+}
+
+async function updateTaskStatus(taskId: string, userId: string, status: Task["status"]) {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    await pool.query(
+      "UPDATE tasks SET status = $3, updated_at = now() WHERE id = $1 AND user_id = $2",
+      [taskId, userId, status],
+    );
+    return;
+  }
+  const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  const updated = allTasks.map((task) => (
+    task.id === taskId && task.userId === userId ? { ...task, status } : task
+  ));
+  await writeJsonFileLocked(TASKS_FILE, updated);
+}
+
+async function readTaskPayload<T>(taskId: string, kind: TaskPayloadKind, fallback: T): Promise<T> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    const result = await pool.query<{ payload: T }>(
+      "SELECT payload FROM task_payloads WHERE task_id = $1 AND kind = $2",
+      [taskId, kind],
+    );
+    return result.rows[0]?.payload ?? fallback;
+  }
+  const file = kind === "seeds"
+    ? getSeedFile(taskId)
+    : kind === "generated"
+      ? getGeneratedFile(taskId)
+      : getWorkspaceFile(taskId);
+  return readJsonFile<T>(file, fallback);
+}
+
+async function writeTaskPayload(taskId: string, kind: TaskPayloadKind, payload: unknown): Promise<void> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    await pool.query(
+      `INSERT INTO task_payloads (task_id, kind, payload, updated_at)
+       VALUES ($1, $2, $3::jsonb, now())
+       ON CONFLICT (task_id, kind)
+       DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
+      [taskId, kind, JSON.stringify(payload)],
+    );
+    return;
+  }
+  const file = kind === "seeds"
+    ? getSeedFile(taskId)
+    : kind === "generated"
+      ? getGeneratedFile(taskId)
+      : getWorkspaceFile(taskId);
+  await writeJsonFileLocked(file, payload);
+}
+
+async function readEvaluationSnapshot(taskId: string) {
+  return readTaskPayload<EvaluationSnapshot | null>(taskId, "workspace", null);
+}
+
+async function writeEvaluationSnapshot(taskId: string, snapshot: EvaluationSnapshot) {
+  await writeTaskPayload(taskId, "workspace", snapshot);
+}
+
+async function taskBelongsToUser(taskId: string, userId: string): Promise<boolean> {
+  if (STORAGE_BACKEND === "postgres") {
+    const pool = await getPgPool();
+    const result = await pool.query(
+      "SELECT 1 FROM tasks WHERE id = $1 AND user_id = $2 LIMIT 1",
+      [taskId, userId],
+    );
+    return Boolean(result.rows[0]);
+  }
+  const tasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  return tasks.some((task) => task.id === taskId && task.userId === userId);
+}
+
+async function assertTaskOwner(taskId: string, userId: string, res: express.Response): Promise<boolean> {
+  if (!(await taskBelongsToUser(taskId, userId))) {
     res.status(403).json({ error: "禁止访问" });
     return false;
   }
   return true;
 }
 
-async function callAlgorithm<T>(endpoint: string, payload: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${ALGORITHM_BASE}${endpoint}`, {
+async function refreshAlgorithmBaseIfNeeded(): Promise<string> {
+  if (process.env.ALGORITHM_BASE_URL) return ALGORITHM_BASE;
+  const health = await getAlgorithmHealth(ALGORITHM_BASE);
+  if (health) return ALGORITHM_BASE;
+  ALGORITHM_BASE = await resolveAlgorithmBase();
+  return ALGORITHM_BASE;
+}
+
+async function callAlgorithmAt<T>(baseUrl: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -192,8 +656,73 @@ async function callAlgorithm<T>(endpoint: string, payload: unknown, signal?: Abo
   return (await response.json()) as T;
 }
 
-async function postAlgorithmControl<T>(endpoint: string): Promise<T> {
-  const response = await fetch(`${ALGORITHM_BASE}${endpoint}`, { method: "POST" });
+async function callAlgorithm<T>(endpoint: string, payload: unknown, signal?: AbortSignal): Promise<T> {
+  const baseUrl = ALGORITHM_BASE;
+  try {
+    return await callAlgorithmAt<T>(baseUrl, endpoint, payload, signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const nextBaseUrl = await refreshAlgorithmBaseIfNeeded();
+    if (nextBaseUrl !== baseUrl) {
+      return callAlgorithmAt<T>(nextBaseUrl, endpoint, payload, signal);
+    }
+    throw error;
+  }
+}
+
+function isEvaluationSnapshot(value: unknown): value is EvaluationSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const snapshot = value as Partial<EvaluationSnapshot>;
+  return typeof snapshot.taskId === "string"
+    && typeof snapshot.sourceFile === "string"
+    && typeof snapshot.oneSentenceConclusion === "string"
+    && Boolean(snapshot.stats)
+    && Array.isArray(snapshot.cases)
+    && Array.isArray(snapshot.clusters);
+}
+
+async function createEvaluationSnapshotWithAlgorithm(args: {
+  taskId: string;
+  sourceFile: string;
+  rows: Record<string, unknown>[];
+}): Promise<EvaluationSnapshot> {
+  try {
+    const snapshot = await callAlgorithm<EvaluationSnapshot>("/evaluation/analyze", {
+      taskId: args.taskId,
+      sourceFile: args.sourceFile,
+      rows: args.rows,
+      llmEnabled: EVALUATION_ALGORITHM_LLM_ENABLED,
+    });
+    if (isEvaluationSnapshot(snapshot)) return snapshot;
+    throw new Error("Algorithm evaluation analyze returned invalid snapshot");
+  } catch (error) {
+    console.warn("Evaluation algorithm analyze failed; falling back to local rules", error);
+    return createEvaluationSnapshotFromRows({
+      taskId: args.taskId,
+      sourceFile: args.sourceFile,
+      rows: args.rows,
+      extractionMode: "rule",
+    });
+  }
+}
+
+async function attachEvaluationAssetsWithAlgorithm(snapshot: EvaluationSnapshot, preview: boolean): Promise<EvaluationSnapshot> {
+  try {
+    const result = await callAlgorithm<EvaluationAlgorithmAssetResponse>("/evaluation/assets", {
+      snapshot,
+      preview,
+      llmEnabled: EVALUATION_ALGORITHM_LLM_ENABLED,
+    });
+    if (isEvaluationSnapshot(result.snapshot)) return result.snapshot;
+    throw new Error("Algorithm evaluation assets returned invalid snapshot");
+  } catch (error) {
+    console.warn("Evaluation algorithm assets failed; falling back to local rules", error);
+    return preview ? attachPreview(snapshot) : attachAssetPackage(snapshot);
+  }
+}
+
+async function postAlgorithmControlAt<T>(baseUrl: string, endpoint: string): Promise<T> {
+  const response = await fetch(`${baseUrl}${endpoint}`, { method: "POST" });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Algorithm service error ${response.status}: ${text}`);
@@ -201,8 +730,21 @@ async function postAlgorithmControl<T>(endpoint: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function postAlgorithmControl<T>(endpoint: string): Promise<T> {
+  const baseUrl = ALGORITHM_BASE;
+  try {
+    return await postAlgorithmControlAt<T>(baseUrl, endpoint);
+  } catch (error) {
+    const nextBaseUrl = await refreshAlgorithmBaseIfNeeded();
+    if (nextBaseUrl !== baseUrl) {
+      return postAlgorithmControlAt<T>(nextBaseUrl, endpoint);
+    }
+    throw error;
+  }
+}
+
 async function startServer() {
-  ensureDataDir();
+  await initStorage();
   ALGORITHM_BASE = await resolveAlgorithmBase();
   const app = express();
 
@@ -224,9 +766,11 @@ async function startServer() {
 
   app.get("/api/health", async (_req, res) => {
     let algorithm = { ok: false, baseUrl: ALGORITHM_BASE };
+    const storage = await getStorageHealth();
     try {
-      const response = await fetch(`${ALGORITHM_BASE}/health`);
-      algorithm = { ok: response.ok, baseUrl: ALGORITHM_BASE };
+      const baseUrl = await refreshAlgorithmBaseIfNeeded();
+      const health = await getAlgorithmHealth(baseUrl);
+      algorithm = { ok: Boolean(health), baseUrl };
     } catch {
       algorithm = { ok: false, baseUrl: ALGORITHM_BASE };
     }
@@ -236,30 +780,41 @@ async function startServer() {
       services: {
         node: true,
         algorithm,
+        storage,
       },
     });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ error: "有效的 email 是必填项" });
     }
-    const token = jwt.sign({ sub: email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    return res.json({
-      token,
-      user: { id: email, email, displayName: email },
-    });
+    if (password.length < 3 || password.length > 256) {
+      return res.status(400).json({ error: "密码长度需为 3-256 个字符" });
+    }
+    try {
+      const user = await authenticateOrCreateUser(email, password);
+      const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+      return res.json({
+        token,
+        user: { id: user.id, email: user.email, displayName: user.displayName },
+      });
+    } catch {
+      return res.status(401).json({ error: "账号或密码错误" });
+    }
   });
 
-  app.get("/api/tasks", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    return res.json(listTasks(userId));
+  app.get("/api/tasks", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    return res.json(await listTasks(userId));
   });
 
-  app.post("/api/tasks", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+  app.post("/api/tasks", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
     const now = new Date();
     const task: Task = {
       id: `task-${Date.now()}`,
@@ -267,60 +822,44 @@ async function startServer() {
       name: String(req.body?.name || `新任务-${now.toLocaleTimeString()}`),
       time: now.toISOString().split("T")[0],
       status: "idle",
-      businessType: req.body?.businessType || "evaluation",
-      workMode: req.body?.workMode || "advanced",
+      businessType: normalizeBusinessType(req.body?.businessType),
+      workMode: normalizeWorkMode(req.body?.workMode),
     };
-    const updated = [
-      task,
-      ...allTasks.map((item) =>
-        item.userId === userId ? { ...item, active: false } : item,
-      ),
-    ];
-    saveTasks(updated);
-    return res.json(task);
+    return res.json(await createTask(task));
   });
 
-  app.patch("/api/tasks/:id", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
-    const task = allTasks.find((item) => item.id === req.params.id && item.userId === userId);
-    if (!task) {
-      return res.status(404).json({ error: "任务不存在" });
-    }
+  app.patch("/api/tasks/:id", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
     const name = String(req.body?.name || "").trim();
     if (name.length < 1 || name.length > 80) {
       return res.status(400).json({ error: "任务名称长度需为 1-80 个字符" });
     }
-    const updatedTask = { ...task, name };
-    saveTasks(allTasks.map((item) => (item.id === task.id ? updatedTask : item)));
+    const updatedTask = await updateTaskName(req.params.id, userId, name);
+    if (!updatedTask) {
+      return res.status(404).json({ error: "任务不存在" });
+    }
     return res.json(updatedTask);
   });
 
-  app.delete("/api/tasks/:id", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
-    const nextTasks = allTasks.filter(
-      (task) => !(task.userId === userId && task.id === req.params.id),
-    );
-    saveTasks(nextTasks);
-    const seedFile = getSeedFile(req.params.id);
-    const genFile = getGeneratedFile(req.params.id);
-    const workspaceFile = getWorkspaceFile(req.params.id);
-    if (fs.existsSync(seedFile)) fs.unlinkSync(seedFile);
-    if (fs.existsSync(genFile)) fs.unlinkSync(genFile);
-    if (fs.existsSync(workspaceFile)) fs.unlinkSync(workspaceFile);
+  app.delete("/api/tasks/:id", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    await deleteTask(req.params.id, userId);
     return res.json({ success: true });
   });
 
-  app.get("/api/tasks/:taskId/seeds", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    return res.json(readJsonFile(getSeedFile(req.params.taskId), []));
+  app.get("/api/tasks/:taskId/seeds", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    return res.json(await readTaskPayload(req.params.taskId, "seeds", []));
   });
 
   app.post("/api/tasks/:taskId/seeds", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
 
     // Validate seeds input
     const seeds = req.body;
@@ -331,42 +870,46 @@ async function startServer() {
       return res.status(400).json({ error: "seeds 数量不能超过 500 条" });
     }
 
-    await writeJsonFileLocked(getSeedFile(req.params.taskId), req.body);
+    await writeTaskPayload(req.params.taskId, "seeds", req.body);
     return res.json(req.body);
   });
 
-  app.get("/api/tasks/:taskId/generated", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    return res.json(readJsonFile(getGeneratedFile(req.params.taskId), []));
+  app.get("/api/tasks/:taskId/generated", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    return res.json(await readTaskPayload(req.params.taskId, "generated", []));
   });
 
   app.post("/api/tasks/:taskId/generated", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    await writeJsonFileLocked(getGeneratedFile(req.params.taskId), req.body);
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    await writeTaskPayload(req.params.taskId, "generated", req.body);
     return res.json(req.body);
   });
 
-  app.get("/api/tasks/:taskId/workspace", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    return res.json(readJsonFile(getWorkspaceFile(req.params.taskId), null));
+  app.get("/api/tasks/:taskId/workspace", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    return res.json(await readTaskPayload(req.params.taskId, "workspace", null));
   });
 
   app.post("/api/tasks/:taskId/workspace", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
     if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
       return res.status(400).json({ error: "workspace 必须是对象" });
     }
-    await writeJsonFileLocked(getWorkspaceFile(req.params.taskId), req.body);
+    await writeTaskPayload(req.params.taskId, "workspace", req.body);
     return res.json(req.body);
   });
 
   app.post("/api/evaluation/tasks", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    const allTasks = readJsonFile<Task[]>(TASKS_FILE, []);
+    const userId = requireUserId(req, res);
+    if (!userId) return;
     const now = new Date();
     const task: Task = {
       id: `eval-${Date.now()}`,
@@ -377,52 +920,50 @@ async function startServer() {
       businessType: "evaluation",
       workMode: "evaluation",
     };
-    saveTasks([
-      task,
-      ...allTasks.map((item) => (
-        item.userId === userId ? { ...item, active: false } : item
-      )),
-    ]);
-    return res.json(task);
+    return res.json(await createTask(task));
   });
 
-  app.get("/api/evaluation/tasks/:taskId", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    return res.json(readEvaluationSnapshot(req.params.taskId));
+  app.get("/api/evaluation/tasks/:taskId", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    return res.json(await readEvaluationSnapshot(req.params.taskId));
   });
 
   app.post("/api/evaluation/tasks/:taskId/sample", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
     const snapshot = createDemoEvaluationSnapshot(req.params.taskId);
     await writeEvaluationSnapshot(req.params.taskId, snapshot);
-    updateTaskStatus(req.params.taskId, userId, "completed");
+    await updateTaskStatus(req.params.taskId, userId, "completed");
     return res.json(snapshot);
   });
 
   app.post("/api/evaluation/tasks/:taskId/parse", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
     const rows = req.body?.rows;
     if (!assertRowsPayload(rows)) {
       return res.status(400).json({ error: "rows 必须是 1000 条以内的对象数组" });
     }
     const sourceFile = String(req.body?.sourceFile || "uploaded_eval_evidence");
-    const snapshot = createEvaluationSnapshotFromRows({
+    const snapshot = await createEvaluationSnapshotWithAlgorithm({
       taskId: req.params.taskId,
       sourceFile,
       rows,
     });
     await writeEvaluationSnapshot(req.params.taskId, snapshot);
-    updateTaskStatus(req.params.taskId, userId, "completed");
+    await updateTaskStatus(req.params.taskId, userId, "completed");
     return res.json(snapshot);
   });
 
   app.patch("/api/evaluation/tasks/:taskId/clusters/:clusterId", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    const snapshot = await readEvaluationSnapshot(req.params.taskId);
     if (!snapshot) {
       return res.status(404).json({ error: "评测任务尚未解析" });
     }
@@ -441,6 +982,10 @@ async function startServer() {
       if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) {
         return res.status(400).json({ error: "strategy 必须是对象" });
       }
+      const strategyError = validateEvaluationStrategyPatch(strategy);
+      if (strategyError) {
+        return res.status(400).json({ error: strategyError });
+      }
       nextSnapshot = updateClusterStrategy(nextSnapshot, req.params.clusterId, strategy);
     }
 
@@ -449,34 +994,37 @@ async function startServer() {
   });
 
   app.post("/api/evaluation/tasks/:taskId/preview", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    const snapshot = await readEvaluationSnapshot(req.params.taskId);
     if (!snapshot) {
       return res.status(404).json({ error: "评测任务尚未解析" });
     }
-    const nextSnapshot = attachPreview(snapshot);
+    const nextSnapshot = await attachEvaluationAssetsWithAlgorithm(snapshot, true);
     await writeEvaluationSnapshot(req.params.taskId, nextSnapshot);
     return res.json(nextSnapshot);
   });
 
   app.post("/api/evaluation/tasks/:taskId/package", async (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    const snapshot = readEvaluationSnapshot(req.params.taskId);
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    const snapshot = await readEvaluationSnapshot(req.params.taskId);
     if (!snapshot) {
       return res.status(404).json({ error: "评测任务尚未解析" });
     }
-    const nextSnapshot = attachAssetPackage(snapshot);
+    const nextSnapshot = await attachEvaluationAssetsWithAlgorithm(snapshot, false);
     await writeEvaluationSnapshot(req.params.taskId, nextSnapshot);
-    updateTaskStatus(req.params.taskId, userId, "completed");
+    await updateTaskStatus(req.params.taskId, userId, "completed");
     return res.json(nextSnapshot);
   });
 
-  app.get("/api/evaluation/tasks/:taskId/download/:fileName", (req, res) => {
-    const userId = getUserIdFromAuth(req);
-    if (!assertTaskOwner(req.params.taskId, userId, res)) return;
-    const snapshot = readEvaluationSnapshot(req.params.taskId);
+  app.get("/api/evaluation/tasks/:taskId/download/:fileName", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
+    const snapshot = await readEvaluationSnapshot(req.params.taskId);
     const assetPackage = snapshot?.package;
     if (!snapshot || !assetPackage) {
       return res.status(404).json({ error: "请先生成资产包" });
@@ -589,8 +1137,9 @@ async function startServer() {
 
   app.get("/api/algorithm/progress/:jobId", async (req, res) => {
     try {
+      const baseUrl = await refreshAlgorithmBaseIfNeeded();
       const response = await fetch(
-        `${ALGORITHM_BASE}/progress/${req.params.jobId}`
+        `${baseUrl}/progress/${req.params.jobId}`
       );
       if (!response.ok) {
         return res
@@ -606,9 +1155,12 @@ async function startServer() {
   });
 
   app.post("/api/tasks/:taskId/generate", async (req, res) => {
+    const userId = requireUserId(req, res);
+    if (!userId) return;
+    if (!(await assertTaskOwner(req.params.taskId, userId, res))) return;
     try {
       const result = await callAlgorithm<any>("/generate", req.body);
-      writeJsonFile(getGeneratedFile(req.params.taskId), result.items);
+      await writeTaskPayload(req.params.taskId, "generated", result.items);
       return res.json(result);
     } catch (error) {
       console.error(error);

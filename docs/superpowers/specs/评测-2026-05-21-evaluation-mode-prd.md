@@ -44,7 +44,7 @@ CorpusFlow 不做完整评测平台，不做 LLM Judge，不做 CI Gate，不做
 复赛阶段以这份文档为准：
 
 ```text
-docs/superpowers/specs/2026-05-21-复赛评测模式需求与里程碑.md
+docs/superpowers/specs/评测-评测-评测-2026-05-21-复赛评测模式需求与里程碑.md
 ```
 
 两条路线的关系：

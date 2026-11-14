@@ -53,7 +53,13 @@ function statusTone(status: ClusterDecisionStatus) {
 function assetTypeLabel(type: EvalAssetType) {
   if (type === "training_candidates") return "训练候选";
   if (type === "eval_cases") return "回归评测";
-  return "负例边界";
+  return "边界负例";
+}
+
+function assetTypeDescription(type: EvalAssetType) {
+  if (type === "training_candidates") return "进入训练候选集";
+  if (type === "eval_cases") return "进入回归评测集";
+  return "沉淀拒识与边界样本";
 }
 
 function evidenceRoleLabel(role: FailureSignal | string) {
@@ -161,12 +167,53 @@ function assetImpactLabel(cluster: ProblemCluster) {
   return `影响：${assetFileLabel(cluster.recommendedStrategy.assetType)} +${cluster.recommendedStrategy.count}；沉淀边界负例。`;
 }
 
+function strategyImpactLabel(assetType: EvalAssetType, count: number) {
+  return `将影响 ${assetFileLabel(assetType)} +${Math.max(0, Math.round(count || 0))}`;
+}
+
+function strategyCountMax(assetType: EvalAssetType) {
+  if (assetType === "training_candidates") return 200;
+  return 100;
+}
+
+function strategyRuleText(template: string) {
+  const rules: Record<string, string> = {
+    multiturn_context_repair: "围绕 history + 当前请求生成多轮样本，覆盖地点、状态、偏好和约束承接。",
+    coreference_repair: "构造“那里、附近、这个”等指代问法，要求样本显式绑定上一轮上下文。",
+    tool_call_boundary_eval: "生成必须触发工具的回归样本，标明 expected tool 与关键参数。",
+    tool_routing_eval: "围绕相近车控工具和动作/问答边界生成评测样本，突出正确落域与参数约束。",
+    multi_constraint_repair: "构造多约束指令，覆盖时间、范围、数量、排序和禁止条件。",
+    specific_answer_repair: "补充高信息量标准回答，要求答案具体、可执行、带必要解释。",
+    safety_boundary_eval: "构造正常放行、拒识和安全替代回答的边界样本。",
+    format_schema_eval: "围绕 schema、字段和 JSON 结构生成格式校验评测样本。",
+    retrieval_grounding_eval: "生成带 retrieved_contexts 和 reference 的 grounding 检查样本。",
+    human_review_queue: "整理为人工复核样本，优先补齐期望输出和失败理由。",
+  };
+  return rules[template] || template;
+}
+
 function hasClusterSignal(tag: string, cluster: ProblemCluster) {
   return cluster.failureSignals.includes(tag as FailureSignal);
 }
 
 function trimPreview(text: string) {
   return text.length > 1800 ? `${text.slice(0, 1800)}\n...` : text;
+}
+
+function formatPreviewValue(value: unknown) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "—";
+    if (value.every((item) => typeof item === "string")) return value.join("、");
+    return JSON.stringify(value, null, 2);
+  }
+  if (value && typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value ?? "—");
+}
+
+function formatLabeledPreview(rows: Array<[label: string, key: string, value: unknown]>) {
+  return trimPreview(rows.map(([label, key, value]) => (
+    `${label}（${key}）\n${formatPreviewValue(value)}`
+  )).join("\n\n"));
 }
 
 function getAssetPreview(assetPackage: EvalAssetPackage, fileName: string) {
@@ -177,55 +224,105 @@ function getAssetPreview(assetPackage: EvalAssetPackage, fileName: string) {
       ...assetPackage.assets.negativeCases,
     ][0];
     if (!asset) return "[]";
-    return trimPreview(JSON.stringify({
-      asset_type: asset.assetType,
-      cluster_id: asset.clusterId,
-      source_case_id: asset.sourceCaseId,
-      system: asset.system,
-      instruction: asset.instruction,
-      input: asset.input,
-      output: asset.output,
-      ...(asset.expected ? { expected: asset.expected } : {}),
-      ...(asset.history ? { history: asset.history } : {}),
-      tags: asset.tags,
-    }, null, 2));
+    return formatLabeledPreview([
+      ["资产编号", "id", asset.id],
+      ["资产类型", "asset_type", assetTypeLabel(asset.assetType)],
+      ["根因编号", "cluster_id", asset.clusterId],
+      ["来源 Case", "source_case_id", asset.sourceCaseId],
+      ["系统提示", "system", asset.system],
+      ["指令", "instruction", asset.instruction],
+      ["输入", "input", asset.input],
+      ["输出", "output", asset.output],
+      ["期望输出", "expected_output", asset.expected],
+      ["是否 LLM 推理", "llm_inference", asset.expansion.llmInference],
+      ["多轮历史", "history", asset.history],
+      ["标签", "tags", asset.tags],
+    ]);
   }
   if (fileName === "training_candidates.jsonl") {
     const asset = assetPackage.assets.trainingCandidates[0];
     if (!asset) return "[]";
-    return trimPreview(JSON.stringify({
-      system: asset.system,
-      instruction: asset.instruction,
-      input: asset.input,
-      output: asset.output,
-      ...(asset.history ? { history: asset.history } : {}),
-    }, null, 2));
+    return formatLabeledPreview([
+      ["资产编号", "id", asset.id],
+      ["资产类型", "asset_type", assetTypeLabel(asset.assetType)],
+      ["根因编号", "cluster_id", asset.clusterId],
+      ["来源 Case", "source_case_id", asset.sourceCaseId],
+      ["系统提示", "system", asset.system],
+      ["指令", "instruction", asset.instruction],
+      ["输入", "input", asset.input],
+      ["输出", "output", asset.output],
+      ["期望输出", "expected_output", asset.expected],
+      ["是否 LLM 推理", "llm_inference", asset.expansion.llmInference],
+      ["多轮历史", "history", asset.history],
+    ]);
   }
   if (fileName === "eval_cases.jsonl") {
     const asset = assetPackage.assets.evalCases[0];
     if (!asset) return "[]";
-    return trimPreview(JSON.stringify({
-      id: asset.id,
-      input: asset.instruction,
-      expected_output: asset.expected || asset.output,
-      tags: asset.tags,
-    }, null, 2));
+    return formatLabeledPreview([
+      ["样本编号", "id", asset.id],
+      ["资产类型", "asset_type", assetTypeLabel(asset.assetType)],
+      ["根因编号", "cluster_id", asset.clusterId],
+      ["来源 Case", "source_case_id", asset.sourceCaseId],
+      ["评测输入", "input", asset.instruction],
+      ["期望输出", "expected_output", asset.expected || asset.output],
+      ["是否 LLM 推理", "llm_inference", asset.expansion.llmInference],
+      ["标签", "tags", asset.tags],
+    ]);
   }
   if (fileName === "negative_cases.jsonl") {
     const asset = assetPackage.assets.negativeCases[0];
     if (!asset) return "[]";
-    return trimPreview(JSON.stringify({
-      input: asset.instruction,
-      unsafe_output: asset.output,
-      expected_behavior: asset.expected,
-      tags: asset.tags,
-    }, null, 2));
+    return formatLabeledPreview([
+      ["资产编号", "id", asset.id],
+      ["资产类型", "asset_type", assetTypeLabel(asset.assetType)],
+      ["根因编号", "cluster_id", asset.clusterId],
+      ["来源 Case", "source_case_id", asset.sourceCaseId],
+      ["输入", "input", asset.instruction],
+      ["风险输出", "unsafe_output", asset.output],
+      ["期望行为", "expected_behavior", asset.expected],
+      ["是否 LLM 推理", "llm_inference", asset.expansion.llmInference],
+      ["标签", "tags", asset.tags],
+    ]);
   }
   if (fileName === "quality_report.json") {
-    return trimPreview(JSON.stringify(assetPackage.assets.qualityReport, null, 2));
+    const report = assetPackage.assets.qualityReport;
+    return formatLabeledPreview([
+      ["任务编号", "taskId", assetPackage.taskId],
+      ["运行编号", "runId", assetPackage.runId],
+      ["来源文件", "source_file", report.source_file],
+      ["原始记录", "raw_count", report.raw_count],
+      ["证据数量", "evidence_count", report.evidence_count],
+      ["明确失败", "failed_count", report.failed_count],
+      ["根因数量", "cluster_count", report.cluster_count],
+      ["已采纳根因", "accepted_cluster_count", report.accepted_cluster_count],
+      ["已拒绝根因", "rejected_cluster_count", report.rejected_cluster_count],
+      ["生成模式", "generation_mode", report.generation_mode],
+      ["扩增资产数", "expanded_asset_count", report.expanded_asset_count],
+      ["采纳根因", "accepted_clusters", report.accepted_clusters],
+      ["拒绝根因", "rejected_clusters", report.rejected_clusters],
+      ["导出文件", "files", assetPackage.files],
+    ]);
   }
   if (fileName === "provenance.json") {
-    return trimPreview(JSON.stringify(assetPackage.assets.provenance.slice(0, 3), null, 2));
+    const source = assetPackage.assets.provenance[0];
+    if (!source) return "[]";
+    return formatLabeledPreview([
+      ["资产编号", "assetId", source.assetId],
+      ["来源文件", "sourceFile", source.sourceFile],
+      ["来源 Case", "sourceCaseId", source.sourceCaseId],
+      ["来源行", "sourceRowId", source.sourceRowId],
+      ["Trace 编号", "traceId", source.traceId],
+      ["会话编号", "sessionId", source.sessionId],
+      ["问题根因", "problemCluster", source.problemCluster],
+      ["根因名称", "problemClusterName", source.problemClusterName],
+      ["根因假设", "rootCauseHypothesis", source.rootCauseHypothesis],
+      ["生成策略", "strategyTemplate", source.strategyTemplate],
+      ["修复方向", "strategySolution", source.strategySolution],
+      ["资产类型", "assetType", assetTypeLabel(source.assetType)],
+      ["是否 LLM 推理", "llm_inference", source.llmInference],
+      ["生成时间", "generatedAt", source.generatedAt],
+    ]);
   }
   return "文件不存在";
 }
@@ -261,6 +358,9 @@ export function EvaluationWorkspace({
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [selectedAssetFile, setSelectedAssetFile] = useState(DOWNLOAD_FILES[0]);
   const [pendingAssetAction, setPendingAssetAction] = useState<"preview" | "package" | null>(null);
+  const [globalStrategyDraft, setGlobalStrategyDraft] = useState("");
+  const [globalStrategyApplied, setGlobalStrategyApplied] = useState(false);
+  const [globalStrategyPending, setGlobalStrategyPending] = useState(false);
 
   const clusters = snapshot?.clusters || [];
   const cases = snapshot?.cases || [];
@@ -334,8 +434,32 @@ export function EvaluationWorkspace({
     try {
       await runner();
       setAssetModalOpen(true);
+    } catch {
+      // The parent callback owns the user-facing error message.
     } finally {
       setPendingAssetAction(null);
+    }
+  };
+  const applyGlobalStrategy = async () => {
+    const guidance = globalStrategyDraft.trim();
+    if (!guidance || acceptedClusters.length === 0 || globalStrategyPending) return;
+    const guidanceLine = `全局约束：${guidance}`;
+    setGlobalStrategyPending(true);
+    try {
+      for (const cluster of acceptedClusters) {
+        const solution = cluster.recommendedStrategy.solution.includes(guidanceLine)
+          ? cluster.recommendedStrategy.solution
+          : `${cluster.recommendedStrategy.solution}\n${guidanceLine}`;
+        const strategyTemplate = cluster.recommendedStrategy.strategyTemplate.includes(guidanceLine)
+          ? cluster.recommendedStrategy.strategyTemplate
+          : `${cluster.recommendedStrategy.strategyTemplate}\n${guidanceLine}`;
+        await onUpdateStrategy(cluster.id, { solution, strategyTemplate });
+      }
+      setGlobalStrategyApplied(true);
+    } catch {
+      setGlobalStrategyApplied(false);
+    } finally {
+      setGlobalStrategyPending(false);
     }
   };
 
@@ -450,8 +574,8 @@ export function EvaluationWorkspace({
 
           <div className="grid min-w-0 gap-2 rounded-xl border border-[rgba(129,140,248,0.24)] bg-[rgba(99,102,241,0.08)] p-3">
             <div className="flex items-center justify-between gap-2 text-xs font-black text-slate-200">
-              <span>方案调整指令</span>
-              {clusters[0] && <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[11px] text-indigo-300">引用 {clusters[0].id}</span>}
+              <span>任务背景与生成策略</span>
+              {globalStrategyApplied && <span className="rounded-full border border-slate-600 bg-slate-900/50 px-2 py-1 text-[11px] text-slate-300">已更新</span>}
             </div>
             <div className="grid gap-2">
               <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
@@ -459,7 +583,7 @@ export function EvaluationWorkspace({
                 <strong className="text-right text-slate-200">评测优先，训练辅助</strong>
               </div>
               <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
-                <span>策略</span>
+                <span>默认策略</span>
                 <strong className="text-right text-slate-200">
                   {clusters.length > 0 ? `${clusters.slice(0, 2).map((cluster) => cluster.id).join("/")} P0${clusters[2] ? `，${clusters[2].id} P1` : ""}` : "待解析"}
                 </strong>
@@ -468,16 +592,23 @@ export function EvaluationWorkspace({
             <div className="grid min-w-0 gap-2 rounded-xl border border-slate-800 bg-[#161621] p-2.5">
               <textarea
                 rows={3}
-                placeholder="补充业务背景、调整聚类、修改生成配比..."
+                value={globalStrategyDraft}
+                onChange={(event) => {
+                  setGlobalStrategyDraft(event.target.value);
+                  setGlobalStrategyApplied(false);
+                }}
+                placeholder="补充业务背景、评测目标或生成约束，例如：优先补齐工具调用边界，少生成闲聊类样本。"
                 className="min-h-[68px] w-full resize-none rounded-[10px] border border-slate-700 bg-[rgba(15,15,22,0.62)] p-[9px] text-xs leading-normal text-slate-200 outline-none placeholder-slate-600 focus:border-indigo-500/50"
               />
               <div className="flex items-center justify-between gap-2">
-                <span className="rounded-full border border-slate-700 px-2 py-1 text-[11px] font-black text-slate-400">应用到：生产方案</span>
+                <span className="rounded-full border border-slate-700 px-2 py-1 text-[11px] font-black text-slate-400">应用到：整个任务</span>
                 <button
                   type="button"
-                  className="min-h-8 min-w-[86px] rounded-[10px] border border-slate-700 bg-slate-900/60 px-3 text-xs font-black text-slate-300 hover:bg-slate-800"
+                  onClick={() => void applyGlobalStrategy()}
+                  disabled={!globalStrategyDraft.trim() || acceptedCount === 0 || status !== "idle" || globalStrategyPending}
+                  className="min-h-8 min-w-[96px] rounded-[10px] border border-slate-700 bg-slate-900/60 px-3 text-xs font-black text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  发送
+                  {globalStrategyPending ? "更新中" : "更新全局策略"}
                 </button>
               </div>
             </div>
@@ -892,8 +1023,8 @@ export function EvaluationWorkspace({
                                 type="button"
                                 onClick={() => setEditingCluster(cluster)}
                                 className="flex h-7 w-[30px] items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 transition-colors hover:bg-indigo-500/15"
-                                title="编辑"
-                                aria-label="编辑"
+                                title="调整方案"
+                                aria-label="调整方案"
                               >
                                 <Edit3 size={14} />
                               </button>
@@ -953,8 +1084,14 @@ export function EvaluationWorkspace({
       </div>
 
       {caseDrawerClusterId && drawerCluster && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/60 backdrop-blur-sm">
-          <div className="h-full w-[520px] overflow-y-auto border-l border-slate-800 bg-[#151520] p-5 shadow-2xl custom-scrollbar">
+        <div
+          className="fixed inset-0 z-40 flex justify-end bg-slate-950/60 backdrop-blur-sm"
+          onClick={() => setCaseDrawerClusterId(null)}
+        >
+          <div
+            className="h-full w-[520px] overflow-y-auto border-l border-slate-800 bg-[#151520] p-5 shadow-2xl custom-scrollbar"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <div className="text-xs font-bold text-cyan-300">{drawerCluster.id}</div>
@@ -999,7 +1136,7 @@ export function EvaluationWorkspace({
         <StrategyEditor
           cluster={editingCluster}
           onClose={() => setEditingCluster(null)}
-          onSave={(strategy) => void onUpdateStrategy(editingCluster.id, strategy).then(() => setEditingCluster(null))}
+          onSave={(strategy) => void onUpdateStrategy(editingCluster.id, strategy).then(() => setEditingCluster(null)).catch(() => undefined)}
         />
       )}
 
@@ -1122,62 +1259,117 @@ function StrategyEditor({
   const [count, setCount] = useState(cluster.recommendedStrategy.count);
   const [assetType, setAssetType] = useState<EvalAssetType>(cluster.recommendedStrategy.assetType);
   const [solution, setSolution] = useState(cluster.recommendedStrategy.solution);
+  const [strategyTemplate, setStrategyTemplate] = useState(strategyRuleText(cluster.recommendedStrategy.strategyTemplate));
+  const countMax = strategyCountMax(assetType);
+  const normalizedCount = Math.min(countMax, Math.max(0, Math.round(count || 0)));
+
+  useEffect(() => {
+    setCount((value) => Math.min(strategyCountMax(assetType), Math.max(0, Math.round(value || 0))));
+  }, [assetType]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-3xl border border-slate-800 bg-[#151520] p-6 shadow-2xl">
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-bold text-cyan-300">{cluster.id}</div>
-            <h3 className="mt-1 text-lg font-bold text-white">编辑生产策略</h3>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-6 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[calc(100dvh-32px)] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-800 bg-[#151520] p-5 shadow-2xl custom-scrollbar"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-xs font-black text-cyan-300">{cluster.id} · {cluster.name}</div>
+            <h3 className="mt-1 text-lg font-black text-white">调整 {cluster.id} 的生成方案</h3>
+            <div className="mt-2 rounded-xl border border-slate-800 bg-slate-950/35 px-3 py-2 text-xs leading-relaxed text-slate-300">
+              <b className="text-slate-100">当前根因：</b>{cluster.rootCauseHypothesis}
+            </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white">
             <X size={16} />
           </button>
         </div>
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-3.5">
+          <div>
+            <label className="text-xs font-black text-slate-300">修复目标</label>
+            <textarea
+              rows={3}
+              value={solution}
+              onChange={(event) => setSolution(event.target.value)}
+              className="mt-2 w-full resize-none rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm leading-relaxed text-slate-200 outline-none focus:border-cyan-500"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-black text-slate-300">交付产物</label>
+            <div className="mt-2 grid grid-cols-3 gap-2">
             {(["training_candidates", "eval_cases", "negative_cases"] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => setAssetType(type)}
                 className={cn(
-                  "rounded-xl border px-3 py-2 text-xs font-bold",
+                  "rounded-xl border px-3 py-2 text-left text-xs font-bold",
                   assetType === type
                     ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-100"
                     : "border-slate-700 text-slate-400 hover:bg-slate-800",
                 )}
               >
-                {assetTypeLabel(type)}
+                <span className="block">{assetTypeLabel(type)}</span>
+                <span className="mt-1 block text-[10px] font-bold text-slate-500">{assetTypeDescription(type)}</span>
               </button>
             ))}
+            </div>
           </div>
-          <div>
-            <label className="text-xs font-bold text-slate-400">生成数量</label>
+
+          <div className="grid gap-2.5 rounded-xl border border-slate-800 bg-slate-950/25 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-xs font-black text-slate-300">生成数量</label>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-500">默认 {cluster.recommendedStrategy.count}</span>
+                <input
+                  type="number"
+                  min="0"
+                  max={countMax}
+                  value={normalizedCount}
+                  onChange={(event) => setCount(Math.min(countMax, Math.max(0, Number(event.target.value))))}
+                  className="h-8 w-[74px] rounded-lg border border-slate-700 bg-slate-900/70 px-2 text-right text-sm font-black text-slate-200 outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
             <input
-              type="number"
+              type="range"
               min="0"
-              max="300"
-              value={count}
+              max={countMax}
+              step="1"
+              value={normalizedCount}
               onChange={(event) => setCount(Number(event.target.value))}
-              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-500"
+              className="h-2 w-full cursor-pointer accent-cyan-400"
+              aria-label="生成数量"
             />
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+              <span>0</span>
+              <span>{countMax}</span>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/35 px-3 py-2 text-xs font-black text-slate-300">
+              {strategyImpactLabel(assetType, normalizedCount)}
+            </div>
           </div>
+
           <div>
-            <label className="text-xs font-bold text-slate-400">解法抽象</label>
+            <label className="text-xs font-black text-slate-300">样本构造规则</label>
             <textarea
-              rows={4}
-              value={solution}
-              onChange={(event) => setSolution(event.target.value)}
-              className="mt-2 w-full resize-none rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-500"
+              rows={3}
+              value={strategyTemplate}
+              onChange={(event) => setStrategyTemplate(event.target.value)}
+              className="mt-2 w-full resize-none rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm leading-relaxed text-slate-200 outline-none focus:border-cyan-500"
             />
           </div>
+
           <button
-            onClick={() => onSave({ count, assetType, solution })}
+            onClick={() => onSave({ count: normalizedCount, assetType, solution, strategyTemplate })}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-3 text-sm font-bold text-white hover:bg-cyan-500"
           >
             <Box size={15} />
-            应用到生产任务
+            保存生成方案
           </button>
         </div>
       </div>

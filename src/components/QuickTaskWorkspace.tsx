@@ -740,11 +740,11 @@ export function QuickTaskWorkspace({
                       <span className="text-[11px] text-slate-500">并发</span>
                       <span className="text-xs font-bold text-white">{quickConcurrency}</span>
                     </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      value={quickConcurrency}
+                      <input
+                        type="range"
+                        min="1"
+                        max="16"
+                        value={quickConcurrency}
                       onChange={(event) => onConcurrencyChange(Number(event.target.value))}
                       className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-800 accent-slate-100"
                     />

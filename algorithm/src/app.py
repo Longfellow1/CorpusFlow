@@ -24,7 +24,27 @@ ARK_BASE_URL = os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/
 ARK_API_KEY = os.getenv("ARK_API_KEY", "")
 ARK_MODEL = os.getenv("ARK_MODEL", "doubao-seed-1-6-250615")
 REQUEST_TIMEOUT = float(os.getenv("ARK_TIMEOUT_SECONDS", "120"))
-GENERATE_CONCURRENCY = max(1, min(int(os.getenv("GENERATE_CONCURRENCY", "6")), 10))
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+MAX_GENERATE_CONCURRENCY = _env_int("MAX_GENERATE_CONCURRENCY", 16, 1, 32)
+GENERATE_CONCURRENCY = _env_int("GENERATE_CONCURRENCY", 8, 1, MAX_GENERATE_CONCURRENCY)
+QUICK_GENERATE_MAX_CONCURRENCY = _env_int("QUICK_GENERATE_MAX_CONCURRENCY", 16, 1, 32)
+QUICK_GENERATE_DEFAULT_CONCURRENCY = _env_int(
+    "QUICK_GENERATE_DEFAULT_CONCURRENCY",
+    8,
+    1,
+    QUICK_GENERATE_MAX_CONCURRENCY,
+)
+EVALUATION_ASSET_CONCURRENCY = _env_int("EVALUATION_ASSET_CONCURRENCY", 4, 1, 16)
+EVALUATION_LLM_ENABLED = os.getenv("EVALUATION_LLM_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 # Content safety: workflow-compatible rejection rules.
 _SAFETY_EXCLUDE_PATTERN = re.compile(
@@ -142,6 +162,1092 @@ class GenerateSeed(BaseModel):
 class GenerateRequest(BaseModel):
     task: GenerateTaskConfig
     seeds: list[GenerateSeed]
+
+
+class EvaluationAnalyzeRequest(BaseModel):
+    taskId: str
+    sourceFile: str = "uploaded_eval_evidence"
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=1000)
+    extractionMode: Literal["rule", "llm", "mock"] | None = None
+    llmEnabled: bool | None = None
+    now: str | None = None
+
+
+class EvaluationAssetRequest(BaseModel):
+    snapshot: dict[str, Any]
+    preview: bool = False
+    llmEnabled: bool | None = None
+    now: str | None = None
+
+
+EVIDENCE_ROLE_ALIASES: dict[str, list[str]] = {
+    "identity": [
+        "id", "caseid", "case_id", "evalid", "eval_id", "runid", "run_id", "traceid", "trace_id",
+        "sessionid", "session_id", "spanid", "span_id", "version", "样本id", "用例id",
+    ],
+    "input": [
+        "input", "userinput", "user_input", "query", "question", "prompt", "instruction",
+        "messages", "history", "conversation", "用户输入", "用户问题", "问题", "消息", "对话",
+    ],
+    "actual": [
+        "actual", "actualoutput", "actual_output", "output", "response", "completion", "answer",
+        "finaltextsnippet", "final_text_snippet", "assistant", "modeloutput", "model_output", "模型输出", "实际回答", "实际输出", "回答",
+    ],
+    "expected": [
+        "expected", "expectedoutput", "expected_output", "ideal", "reference", "groundtruth",
+        "ground_truth", "label", "target", "预期", "期望输出", "参考答案", "标准答案", "期望行为",
+    ],
+    "context": [
+        "context", "retrievedcontexts", "retrieved_contexts", "referencecontexts", "reference_contexts",
+        "documents", "document", "memory", "knowledge", "上下文", "检索上下文", "材料", "记忆",
+    ],
+    "tooling": [
+        "tool", "tools", "toolcalls", "tool_calls", "toolscalled", "tools_called", "expectedtools",
+        "expected_tools", "expectedtool", "expected_tool", "gottool", "got_tool", "toolresults", "tool_results", "action", "工具", "工具调用", "动作",
+    ],
+    "judgment": [
+        "pass", "passed", "success", "score", "label", "grade", "gradingresult", "grading_result",
+        "assertion", "assertionresult", "assertion_result", "reason", "comment", "通过", "是否通过",
+        "分数", "评测结果", "失败原因",
+    ],
+    "runtime": [
+        "latency", "latencyms", "latency_ms", "duration", "tokens", "tokenusage", "token_usage",
+        "cost", "model", "promptversion", "prompt_version", "error", "status", "toolstatus", "tool_status",
+        "resultquality", "result_quality", "耗时", "模型", "版本", "错误",
+    ],
+    "annotation": [
+        "feedback", "failurenote", "failure_note", "repairhint", "repair_hint", "severity", "tag",
+        "failreason", "fail_reason", "correctedfailreason", "corrected_fail_reason", "answerquality",
+        "answer_quality", "answerqualityreason", "answer_quality_reason", "effectivequery", "effective_query",
+        "tags", "note", "备注", "人工反馈", "修复建议", "问题备注",
+    ],
+}
+EVIDENCE_ROLE_ORDER = [
+    "identity", "input", "actual", "expected", "context", "tooling", "judgment", "runtime", "annotation",
+]
+EVAL_SIGNAL_CONFIG: dict[str, dict[str, Any]] = {
+    "memory_missing": {
+        "name": "多轮上下文承接失败",
+        "summary": "没有稳定继承上一轮地点、状态、偏好或约束。",
+        "hypothesis": "缺少 history + current query 的长上下文修复样本。",
+        "assetType": "training_candidates",
+        "schema": "sharegpt_history",
+        "strategyTemplate": "multiturn_context_repair",
+        "solution": "补充带上一轮信息、指代词和当前任务的多轮训练候选。",
+        "keywords": ["多轮", "上下文", "history", "memory", "记忆", "上一轮", "承接", "指代", "coreference", "忘记", "effective_query", "effective query", "上下文污染"],
+    },
+    "coreference_failed": {
+        "name": "指代解析失败",
+        "summary": "未能把“那里、附近、这个”等指代映射到已知上下文。",
+        "hypothesis": "缺少指代消解与上下文绑定样本。",
+        "assetType": "training_candidates",
+        "schema": "sharegpt_history",
+        "strategyTemplate": "coreference_repair",
+        "solution": "生成含隐式地点、对象、时间指代的多轮样本。",
+        "keywords": ["指代", "那里", "附近", "这个", "那个", "coreference"],
+    },
+    "tool_not_called": {
+        "name": "应调用工具但未调用",
+        "summary": "系统给出文本回答，但没有触发必要工具或外部动作。",
+        "hypothesis": "工具调用边界样本不足，模型倾向用语言回答替代动作。",
+        "assetType": "eval_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "tool_call_boundary_eval",
+        "solution": "补充需要调用工具的回归评测用例，并标明 expected tool。",
+        "keywords": [
+            "未调用",
+            "没调用",
+            "没有调用",
+            "未触发工具",
+            "没有触发工具",
+            "未发起工具",
+            "未执行工具",
+            "tool_not_called",
+            "tool not called",
+            "no tool call",
+            "missing tool call",
+            "tool call missing",
+            "action missing",
+        ],
+    },
+    "wrong_tool": {
+        "name": "工具选择错误",
+        "summary": "工具类型、参数或落域不匹配当前请求。",
+        "hypothesis": "工具路由边界与参数约束样本不足。",
+        "assetType": "eval_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "tool_routing_eval",
+        "solution": "生成不同工具边界和相近意图的回归评测用例。",
+        "keywords": ["错工具", "wrong tool", "wrong_mode", "wrong mode", "模式错误", "工具选择", "落域", "路由", "参数错误", "domain"],
+    },
+    "constraint_missing": {
+        "name": "复合约束遗漏",
+        "summary": "回答只满足部分约束，遗漏时间、范围、数量、排序或禁止条件。",
+        "hypothesis": "长指令和多约束样本覆盖不足。",
+        "assetType": "training_candidates",
+        "schema": "alpaca",
+        "strategyTemplate": "multi_constraint_repair",
+        "solution": "生成包含多个显式约束的指令微调候选。",
+        "keywords": ["约束", "遗漏", "漏", "复合", "限制", "条件", "排序", "数量", "只满足", "constraint"],
+    },
+    "negative_emotion": {
+        "name": "负向情绪或投诉处理不足",
+        "summary": "用户表达负向情绪、投诉或体验失败，但回答没有先识别问题并给出纠偏路径。",
+        "hypothesis": "缺少负向反馈识别、安抚、澄清和故障处理的对照样本。",
+        "assetType": "training_candidates",
+        "schema": "alpaca",
+        "strategyTemplate": "negative_feedback_repair",
+        "solution": "补充显式负向反馈、投诉和体验失败场景的标准应答样本。",
+        "keywords": ["负向情绪", "显式负向", "投诉", "抱怨", "体验失败", "情绪识别", "纠偏", "negative emotion", "complaint"],
+    },
+    "weak_answer": {
+        "name": "弱答或空泛回答",
+        "summary": "回答缺少可执行信息，或用泛泛话术替代具体结果。",
+        "hypothesis": "缺少高信息量回答标准与对照样本。",
+        "assetType": "training_candidates",
+        "schema": "alpaca",
+        "strategyTemplate": "specific_answer_repair",
+        "solution": "补充具体、可执行、带必要解释的标准回答样本。",
+        "keywords": ["空泛", "泛化", "弱答", "不具体", "无帮助", "不知道", "含糊", "vague", "generic", "answer_quality", "unusable", "fallback", "fallback_search", "无法获取", "稍后重试", "空结果", "不可用"],
+    },
+    "safety_boundary": {
+        "name": "安全拒识边界不稳",
+        "summary": "对敏感、灰区或正常请求的拒答边界不稳定。",
+        "hypothesis": "安全边界正负样本和解释样本不足。",
+        "assetType": "negative_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "safety_boundary_eval",
+        "solution": "补充拒识、正常放行和安全替代回答的边界样本。",
+        "keywords": ["安全边界", "安全拒识", "高风险", "危险动作", "拒绝执行危险", "敏感", "违规", "越狱", "unsafe", "safety", "blocked"],
+    },
+    "format_error": {
+        "name": "格式或结构错误",
+        "summary": "输出格式、字段、JSON 结构或 schema 不符合要求。",
+        "hypothesis": "结构化输出约束和失败回归样本不足。",
+        "assetType": "eval_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "format_schema_eval",
+        "solution": "补充 schema 约束、反例和格式校验评测用例。",
+        "keywords": ["格式", "schema", "json", "字段", "结构", "解析失败", "format"],
+    },
+    "retrieval_miss": {
+        "name": "检索证据缺失",
+        "summary": "回答没有使用可用上下文，或检索内容不足以支撑回答。",
+        "hypothesis": "检索召回、上下文利用和引用约束样本不足。",
+        "assetType": "eval_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "retrieval_grounding_eval",
+        "solution": "生成含 retrieved_contexts、reference 和 grounding 检查的评测样本。",
+        "keywords": ["检索", "retrieval", "context", "引用", "材料", "知识库", "grounding"],
+    },
+    "unknown_failure": {
+        "name": "待人工确认的长尾失败",
+        "summary": "证据不足以稳定归类，需要补充标注或业务背景。",
+        "hypothesis": "当前证据缺少明确 judgment、expected 或 failure note。",
+        "assetType": "eval_cases",
+        "schema": "eval_case_jsonl",
+        "strategyTemplate": "human_review_queue",
+        "solution": "先整理为人工复核队列，补齐期望输出和失败理由。",
+        "keywords": [],
+    },
+}
+EVAL_BATCH_VARIANTS = [
+    {"name": "source_replay", "prefix": "", "note": "原始失败证据重放，保留 source case 的业务边界。"},
+    {"name": "colloquial_voice", "prefix": "车主口语表达：", "note": "把同类失败改写为更自然的座舱语音口语。"},
+    {"name": "constraint_rich", "prefix": "带额外约束的车载请求：", "note": "增加时间、地点、座位、排序或安全边界等约束。"},
+    {"name": "cross_domain_followup", "prefix": "跨域追问：", "note": "模拟导航、媒体、POI、车控之间的连续追问。"},
+    {"name": "negative_boundary", "prefix": "边界表达：", "note": "覆盖 Action/Non_Action、工具路由和业务质检边界。"},
+    {"name": "regression_probe", "prefix": "回归探针：", "note": "用于下一轮回归评测的稳定检查样本。"},
+]
+
+
+def _eval_llm_enabled(override: bool | None = None) -> bool:
+    return EVALUATION_LLM_ENABLED if override is None else bool(override)
+
+
+def _utc_now_iso() -> str:
+    datetime_module = __import__("datetime")
+    return datetime_module.datetime.now(datetime_module.UTC).isoformat().replace("+00:00", "Z")
+
+
+def _clean_header(value: str) -> str:
+    return re.sub(r"[\s_./:-]+", "", str(value or "").strip().lower())
+
+
+def _to_string_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_evaluation_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for row in rows:
+        item = {str(key): _to_string_cell(value) for key, value in row.items()}
+        if any(value.strip() for value in item.values()):
+            normalized.append(item)
+    return normalized
+
+
+def _find_header(headers: list[str], aliases: list[str]) -> dict[str, Any] | None:
+    normalized = [{"raw": header, "key": _clean_header(header)} for header in headers]
+    alias_set = {_clean_header(alias) for alias in aliases}
+    for header in normalized:
+        if header["key"] in alias_set:
+            return {"header": header["raw"], "confidence": 0.96}
+    for header in normalized:
+        for alias in alias_set:
+            if len(alias) > 3 and (alias in header["key"] or header["key"] in alias):
+                return {"header": header["raw"], "confidence": 0.72}
+    return None
+
+
+def infer_evidence_roles(headers: list[str]) -> list[dict[str, Any]]:
+    roles: list[dict[str, Any]] = []
+    for role in EVIDENCE_ROLE_ORDER:
+        match = _find_header(headers, EVIDENCE_ROLE_ALIASES[role])
+        if match:
+            roles.append({"role": role, "header": match["header"], "confidence": match["confidence"]})
+    return roles
+
+
+def _resolve_role_header(raw: dict[str, str], role: str, mapping: dict[str, str | None]) -> dict[str, Any] | None:
+    header = mapping.get(role)
+    if header and raw.get(header):
+        return {"header": header, "confidence": 0.96}
+    return _find_header(list(raw.keys()), EVIDENCE_ROLE_ALIASES[role])
+
+
+def _get_mapped_cell(raw: dict[str, str], role: str, mapping: dict[str, str | None]) -> str:
+    match = _resolve_role_header(raw, role, mapping)
+    return raw.get(match["header"], "") if match else ""
+
+
+SUPPLEMENTAL_FAILURE_HEADERS = {
+    "failreason",
+    "correctedfailreason",
+    "answerquality",
+    "answerqualityreason",
+    "effectivequery",
+    "toolstatus",
+    "resultquality",
+    "expectedmode",
+    "correctedexpectedmode",
+    "expectedtool",
+    "correctedexpectedtool",
+    "gottool",
+}
+
+
+def _collect_supplemental_failure_text(raw: dict[str, str], used_headers: set[str]) -> str:
+    lines = []
+    for key, value in raw.items():
+        if not str(value).strip():
+            continue
+        if _clean_header(key) in SUPPLEMENTAL_FAILURE_HEADERS:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines)
+
+
+def _build_field_mapping(mapping: dict[str, str | None]) -> dict[str, str]:
+    field_mapping: dict[str, str] = {}
+    if mapping.get("input"):
+        field_mapping["interaction.input"] = str(mapping["input"])
+    if mapping.get("actual"):
+        field_mapping["interaction.actualOutput"] = str(mapping["actual"])
+    if mapping.get("expected"):
+        field_mapping["expectation.expectedOutput"] = str(mapping["expected"])
+    if mapping.get("context"):
+        field_mapping["context.retrievedContexts"] = str(mapping["context"])
+    if mapping.get("tooling"):
+        field_mapping["execution.toolsCalled"] = str(mapping["tooling"])
+    if mapping.get("judgment"):
+        field_mapping["judgments.0.reason"] = str(mapping["judgment"])
+    if mapping.get("annotation"):
+        field_mapping["annotation.failureNote"] = str(mapping["annotation"])
+    return field_mapping
+
+
+def _build_row_mapping(raw: dict[str, str], mapping: dict[str, str | None]) -> dict[str, str | None]:
+    return {
+        role: (_resolve_role_header(raw, role, mapping) or {}).get("header")
+        for role in EVIDENCE_ROLE_ORDER
+    }
+
+
+def _build_row_confidence(raw: dict[str, str], mapping: dict[str, str | None]) -> dict[str, float]:
+    confidence: dict[str, float] = {}
+    for role in EVIDENCE_ROLE_ORDER:
+        match = _resolve_role_header(raw, role, mapping)
+        if match:
+            confidence[role] = float(match["confidence"])
+    return confidence
+
+
+def _parse_evaluation_boolean(value: str) -> bool | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"true", "pass", "passed", "success", "1", "yes", "y", "通过", "成功"}:
+        return True
+    if normalized in {"false", "fail", "failed", "failure", "0", "no", "n", "未通过", "失败"}:
+        return False
+    return None
+
+
+def _parse_evaluation_number(value: str) -> float | None:
+    match = re.search(r"-?\d+(\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    parsed = float(match.group(0))
+    return parsed if math.isfinite(parsed) else None
+
+
+def _parse_evaluation_messages(value: str) -> list[dict[str, str]]:
+    trimmed = str(value or "").strip()
+    if not trimmed:
+        return []
+    try:
+        parsed = json.loads(trimmed)
+        if isinstance(parsed, list):
+            messages: list[dict[str, str]] = []
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                role_text = str(item.get("role", item.get("from", "user"))).lower()
+                content = str(item.get("content", item.get("value", ""))).strip()
+                if not content:
+                    continue
+                if "assistant" in role_text or "gpt" in role_text:
+                    role = "assistant"
+                elif "system" in role_text:
+                    role = "system"
+                else:
+                    role = "user"
+                messages.append({"role": role, "content": content})
+            return messages
+    except (TypeError, json.JSONDecodeError):
+        pass
+
+    messages = []
+    for line in re.split(r"\n+", trimmed):
+        match = re.match(r"^\s*(user|assistant|system|human|gpt|用户|助手|系统)\s*[:：]\s*(.+)$", line, re.I)
+        if not match:
+            content = line.strip()
+            if content:
+                messages.append({"role": "user", "content": content})
+            continue
+        role_text = match.group(1).lower()
+        if "assistant" in role_text or "gpt" in role_text or "助手" in role_text:
+            role = "assistant"
+        elif "system" in role_text or "系统" in role_text:
+            role = "system"
+        else:
+            role = "user"
+        messages.append({"role": role, "content": match.group(2).strip()})
+    return [turn for turn in messages if turn["content"]]
+
+
+def _parse_evaluation_string_list(value: Any) -> list[str]:
+    trimmed = str(value or "").strip()
+    if not trimmed:
+        return []
+    try:
+        parsed = json.loads(trimmed)
+        if isinstance(parsed, list):
+            return [_to_string_cell(item) for item in parsed if _to_string_cell(item)]
+    except (TypeError, json.JSONDecodeError):
+        pass
+    return [item.strip() for item in re.split(r"\n|;|；|\|", trimmed) if item.strip()]
+
+
+def _detect_evaluation_domain(raw: dict[str, str]) -> str:
+    for key, value in raw.items():
+        if _clean_header(key) in {"domain", "业务域", "场景", "category", "feature"}:
+            return value or "general"
+    return "general"
+
+
+def _calculate_evidence_completeness(
+    input_text: str,
+    actual: str,
+    expected: str,
+    judgment_text: str,
+    annotation_text: str,
+) -> str:
+    if input_text and actual and (expected or judgment_text):
+        return "A"
+    if input_text and actual and (annotation_text or judgment_text):
+        return "B"
+    if input_text or annotation_text:
+        return "C"
+    return "D"
+
+
+def _is_failed_evaluation_case(pass_value: bool | None, score: float | None, judgment_text: str, annotation_text: str) -> bool:
+    if pass_value is False:
+        return True
+    if score is not None and score < 0.5:
+        return True
+    text = f"{judgment_text} {annotation_text}".lower()
+    return bool(re.search(r"失败|未通过|fail|incorrect|wrong|badcase|错误|遗漏|拒识|没有|不能", text))
+
+
+def extract_evaluation_failure_signals(case_item: dict[str, Any]) -> list[str]:
+    text = "\n".join(
+        [
+            str(case_item.get("interaction", {}).get("input", "")),
+            str(case_item.get("interaction", {}).get("actualOutput", "")),
+            str(case_item.get("expectation", {}).get("expectedOutput", "")),
+            "\n".join(case_item.get("context", {}).get("retrievedContexts", []) or []),
+            "\n".join(case_item.get("execution", {}).get("toolsCalled", []) or []),
+            "\n".join(str(item.get("reason", "")) for item in case_item.get("judgments", []) if isinstance(item, dict)),
+            str(case_item.get("annotation", {}).get("failureNote", "")),
+        ]
+    ).lower()
+    matches = [
+        signal
+        for signal, config in EVAL_SIGNAL_CONFIG.items()
+        if signal != "unknown_failure" and any(keyword.lower() in text for keyword in config["keywords"])
+    ]
+    unique = list(dict.fromkeys(matches))
+    return unique[:3] if unique else ["unknown_failure"]
+
+
+def normalize_evidence_cases(
+    task_id: str,
+    source_file: str,
+    rows: list[dict[str, Any]],
+    extraction_mode: str = "rule",
+) -> dict[str, Any]:
+    raw_rows = _normalize_evaluation_rows(rows)
+    headers = list(dict.fromkeys(header for row in raw_rows for header in row.keys()))
+    field_roles = infer_evidence_roles(headers)
+    mapping = {item["role"]: item["header"] for item in field_roles}
+    cases: list[dict[str, Any]] = []
+
+    for index, raw in enumerate(raw_rows):
+        row_mapping = _build_row_mapping(raw, mapping)
+        role_confidence = _build_row_confidence(raw, mapping)
+        field_mapping = _build_field_mapping(row_mapping)
+        input_text = _get_mapped_cell(raw, "input", row_mapping)
+        actual = _get_mapped_cell(raw, "actual", row_mapping)
+        expected = _get_mapped_cell(raw, "expected", row_mapping)
+        context = _get_mapped_cell(raw, "context", row_mapping)
+        tooling = _get_mapped_cell(raw, "tooling", row_mapping)
+        judgment = _get_mapped_cell(raw, "judgment", row_mapping)
+        annotation = _get_mapped_cell(raw, "annotation", row_mapping)
+        used_headers = {str(header) for header in row_mapping.values() if header}
+        annotation_text = "\n".join(
+            part for part in [annotation, _collect_supplemental_failure_text(raw, used_headers)] if part
+        )
+        runtime = _get_mapped_cell(raw, "runtime", row_mapping)
+        identity = _get_mapped_cell(raw, "identity", row_mapping)
+        pass_value = _parse_evaluation_boolean(judgment)
+        score = None if pass_value is not None else _parse_evaluation_number(judgment)
+        failed = _is_failed_evaluation_case(pass_value, score, judgment, annotation_text)
+        messages = _parse_evaluation_messages(input_text)
+        last_user_message = next((turn["content"] for turn in reversed(messages) if turn["role"] == "user"), "")
+        completeness = _calculate_evidence_completeness(input_text or last_user_message, actual, expected, judgment, annotation_text)
+        confidence_values = [value for value in role_confidence.values() if isinstance(value, (int, float))]
+        confidence = round(sum(confidence_values) / len(confidence_values), 2) if confidence_values else 0.35
+        trace_header = next((key for key in raw if _clean_header(key) == "traceid"), "")
+        session_header = next((key for key in raw if _clean_header(key) == "sessionid"), "")
+        model_header = next((key for key in raw if _clean_header(key) in {"model", "模型"}), "")
+        prompt_header = next((key for key in raw if _clean_header(key) in {"promptversion", "版本"}), "")
+        severity_header = next((key for key in raw if _clean_header(key) == "severity"), "")
+        latency = _parse_evaluation_number(runtime or raw.get("latency_ms", "") or raw.get("latency", ""))
+        case_item: dict[str, Any] = {
+            "id": f"case_{index + 1:03d}",
+            "taskId": task_id,
+            "sourceCaseId": identity or f"row_{index + 1}",
+            "caseType": "eval_failure" if failed else "eval_observation",
+            "interaction": {
+                "input": input_text or last_user_message,
+                "messages": messages,
+                "actualOutput": actual,
+            },
+            "expectation": {
+                "expectedOutput": expected,
+                "rubrics": _parse_evaluation_string_list(raw.get("rubric") or raw.get("rubrics") or raw.get("tags") or ""),
+            },
+            "context": {
+                "retrievedContexts": _parse_evaluation_string_list(context),
+                "memory": {},
+            },
+            "execution": {
+                "model": raw.get(model_header, "") if model_header else "",
+                "promptVersion": raw.get(prompt_header, "") if prompt_header else "",
+                "toolsCalled": _parse_evaluation_string_list(tooling),
+                "latencyMs": latency,
+                "tokenUsage": None,
+                "status": "failed" if failed else "completed",
+            },
+            "judgments": [{
+                "name": "source_judgment",
+                "pass": pass_value,
+                "score": score,
+                "reason": judgment or annotation_text,
+                "source": "eval" if judgment else "human" if annotation_text else "rule",
+            }],
+            "annotation": {
+                "failureNote": annotation_text or judgment,
+                "repairHint": "",
+                "severity": raw.get(severity_header, "") if severity_header and raw.get(severity_header, "") in {"low", "medium", "high"} else "high" if failed else "medium",
+                "tags": [],
+            },
+            "metadata": {
+                "domain": _detect_evaluation_domain(raw),
+                "sourceFile": source_file,
+            },
+            "provenance": {
+                "sourceRowId": str(index + 1),
+                "traceId": raw.get(trace_header, "") if trace_header else "",
+                "sessionId": raw.get(session_header, "") if session_header else "",
+                "sourceTextRange": None,
+                "extractionMode": extraction_mode,
+                "fieldMapping": field_mapping,
+                "roleConfidence": role_confidence,
+            },
+            "completeness": completeness,
+            "confidence": confidence,
+            "degraded": completeness in {"C", "D"} or confidence < 0.6,
+        }
+        signals = extract_evaluation_failure_signals(case_item)
+        case_item["annotation"]["tags"] = signals
+        case_item["annotation"]["repairHint"] = EVAL_SIGNAL_CONFIG[signals[0]]["solution"]
+        cases.append(case_item)
+
+    return {"fieldRoles": field_roles, "cases": cases, "rawCount": len(raw_rows)}
+
+
+def _get_cluster_signal(case_item: dict[str, Any]) -> str:
+    signals = extract_evaluation_failure_signals(case_item)
+    for preferred in ["memory_missing", "tool_not_called", "wrong_tool", "format_error", "safety_boundary", "constraint_missing"]:
+        if preferred in signals:
+            return preferred
+    return signals[0] if signals else "unknown_failure"
+
+
+def _strategy_count(case_count: int, signal: str) -> int:
+    multiplier = 6 if signal in {"memory_missing", "constraint_missing"} else 4
+    return max(6, case_count * multiplier)
+
+
+def cluster_evaluation_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    failed_cases = [
+        case_item
+        for case_item in cases
+        if case_item.get("completeness") != "D" and _is_failed_evaluation_case(
+            (case_item.get("judgments") or [{}])[0].get("pass"),
+            (case_item.get("judgments") or [{}])[0].get("score"),
+            " ".join(str(item.get("reason", "")) for item in case_item.get("judgments", []) if isinstance(item, dict)),
+            str(case_item.get("annotation", {}).get("failureNote", "")),
+        )
+    ]
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for case_item in failed_cases:
+        signal = _get_cluster_signal(case_item)
+        grouped.setdefault(signal, []).append(case_item)
+
+    clusters: list[dict[str, Any]] = []
+    for index, (signal, signal_cases) in enumerate(sorted(grouped.items(), key=lambda item: len(item[1]), reverse=True)):
+        config = EVAL_SIGNAL_CONFIG[signal]
+        confidence = round(sum(float(item.get("confidence", 0.35)) for item in signal_cases) / len(signal_cases), 2)
+        clusters.append({
+            "id": f"C{index + 1:02d}",
+            "name": config["name"],
+            "caseCount": len(signal_cases),
+            "representativeCaseIds": [item["id"] for item in signal_cases[:3]],
+            "failureSignals": list(dict.fromkeys(signal for item in signal_cases for signal in extract_evaluation_failure_signals(item)))[:4],
+            "basis": {
+                "clusterMethod": "rule_bucket",
+                "primaryRoles": [
+                    "interaction.input",
+                    "interaction.actualOutput",
+                    "expectation.expectedOutput",
+                    "judgments.reason",
+                ],
+                "slices": {
+                    "domain": signal_cases[0].get("metadata", {}).get("domain", "general"),
+                    "scoreBucket": "failed",
+                },
+            },
+            "summary": config["summary"],
+            "rootCauseHypothesis": config["hypothesis"],
+            "recommendedStrategy": {
+                "assetType": config["assetType"],
+                "count": _strategy_count(len(signal_cases), signal),
+                "schema": config["schema"],
+                "strategyTemplate": config["strategyTemplate"],
+                "solution": config["solution"],
+            },
+            "quality": {
+                "confidence": confidence,
+                "purity": "high" if len(signal_cases) >= 3 else "medium" if len(signal_cases) == 2 else "low",
+                "needsHumanReview": confidence < 0.8 or len(signal_cases) < 2,
+            },
+            "status": "accepted",
+            "degraded": any(bool(item.get("degraded")) for item in signal_cases),
+        })
+    return clusters
+
+
+def summarize_evaluation_evidence(cases: list[dict[str, Any]], clusters: list[dict[str, Any]]) -> str:
+    if not cases:
+        return "尚未识别到可用评测证据。"
+    top_names = [cluster["name"] for cluster in clusters[:3]]
+    if not top_names:
+        return f"这是一个评测证据文件，共 {len(cases)} 条记录，当前缺少明确失败信号，需要补充 expected 或失败原因。"
+    domain = next((case.get("metadata", {}).get("domain") for case in cases if case.get("metadata", {}).get("domain") not in {"", "general", None}), "")
+    return f"这是一个{' ' + domain + ' ' if domain else ' '}评测结果，问题集中在{'、'.join(top_names)}。"
+
+
+def _enhance_evaluation_clusters_with_llm(cases: list[dict[str, Any]], clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not clusters:
+        return clusters
+    case_by_id = {case["id"]: case for case in cases}
+    cluster_brief = []
+    for cluster in clusters[:6]:
+        representative = [case_by_id.get(case_id) for case_id in cluster["representativeCaseIds"]]
+        cluster_brief.append({
+            "id": cluster["id"],
+            "currentName": cluster["name"],
+            "signals": cluster["failureSignals"],
+            "caseCount": cluster["caseCount"],
+            "representativeCases": [
+                {
+                    "input": case.get("interaction", {}).get("input", ""),
+                    "actual": case.get("interaction", {}).get("actualOutput", ""),
+                    "expected": case.get("expectation", {}).get("expectedOutput", ""),
+                    "reason": (case.get("judgments") or [{}])[0].get("reason", ""),
+                    "note": case.get("annotation", {}).get("failureNote", ""),
+                }
+                for case in representative
+                if case
+            ],
+        })
+    try:
+        result = call_doubao_json(
+            system_prompt=(
+                "你是评测 badcase error analysis 专家。只基于给定代表 case 改写问题族名称、摘要、根因假设和修复策略，"
+                "不要改变 cluster id、caseCount、case 归属或生成数量。只输出 JSON。"
+            ),
+            user_prompt=json.dumps(
+                {
+                    "clusters": cluster_brief,
+                    "output_schema": {
+                        "clusters": [
+                            {
+                                "id": "string",
+                                "name": "string",
+                                "summary": "string",
+                                "rootCauseHypothesis": "string",
+                                "strategyTemplate": "string",
+                                "solution": "string",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            temperature=0.2,
+            max_tokens=3000,
+        )
+    except Exception:
+        return clusters
+
+    updates = result.get("clusters", []) if isinstance(result, dict) else []
+    by_id = {str(item.get("id", "")): item for item in updates if isinstance(item, dict)}
+    enhanced: list[dict[str, Any]] = []
+    for cluster in clusters:
+        update = by_id.get(cluster["id"])
+        if not update:
+            enhanced.append(cluster)
+            continue
+        next_cluster = {**cluster}
+        for key in ("name", "summary", "rootCauseHypothesis"):
+            value = str(update.get(key, "")).strip()
+            if value:
+                next_cluster[key] = value[:500]
+        strategy = {**next_cluster["recommendedStrategy"]}
+        for key in ("strategyTemplate", "solution"):
+            value = str(update.get(key, "")).strip()
+            if value:
+                strategy[key] = value[:1000]
+        next_cluster["recommendedStrategy"] = strategy
+        next_cluster["basis"] = {**next_cluster["basis"], "clusterMethod": "rule_bucket_llm_label"}
+        enhanced.append(next_cluster)
+    return enhanced
+
+
+def build_evaluation_snapshot(
+    task_id: str,
+    source_file: str,
+    rows: list[dict[str, Any]],
+    extraction_mode: str = "rule",
+    now: str | None = None,
+    llm_enabled: bool | None = None,
+) -> dict[str, Any]:
+    normalized = normalize_evidence_cases(task_id, source_file, rows, extraction_mode)
+    clusters = cluster_evaluation_cases(normalized["cases"])
+    if _eval_llm_enabled(llm_enabled):
+        clusters = _enhance_evaluation_clusters_with_llm(normalized["cases"], clusters)
+    completeness = {"A": 0, "B": 0, "C": 0, "D": 0}
+    for case_item in normalized["cases"]:
+        completeness[str(case_item.get("completeness", "D"))] += 1
+    failed_count = sum(
+        1
+        for case_item in normalized["cases"]
+        if _is_failed_evaluation_case(
+            (case_item.get("judgments") or [{}])[0].get("pass"),
+            (case_item.get("judgments") or [{}])[0].get("score"),
+            " ".join(str(item.get("reason", "")) for item in case_item.get("judgments", []) if isinstance(item, dict)),
+            str(case_item.get("annotation", {}).get("failureNote", "")),
+        )
+    )
+    return {
+        "taskId": task_id,
+        "sourceFile": source_file,
+        "parseStatus": "ready",
+        "oneSentenceConclusion": summarize_evaluation_evidence(normalized["cases"], clusters),
+        "fieldRoles": normalized["fieldRoles"],
+        "stats": {
+            "rawCount": normalized["rawCount"],
+            "evidenceCount": sum(1 for case_item in normalized["cases"] if case_item.get("completeness") != "D"),
+            "failedCount": failed_count,
+            "suspectedCount": sum(1 for case_item in normalized["cases"] if case_item.get("completeness") in {"B", "C"}),
+            "rejectedCount": sum(1 for case_item in normalized["cases"] if "safety_boundary" in case_item.get("annotation", {}).get("tags", [])),
+            "completeness": completeness,
+            "fieldRoleSuccessRate": round(len(normalized["fieldRoles"]) / len(EVIDENCE_ROLE_ORDER), 2),
+        },
+        "cases": normalized["cases"],
+        "clusters": clusters,
+        "preview": None,
+        "package": None,
+        "updatedAt": now or _utc_now_iso(),
+    }
+
+
+def _eval_variant(asset_index: int) -> dict[str, str]:
+    return EVAL_BATCH_VARIANTS[asset_index % len(EVAL_BATCH_VARIANTS)]
+
+
+def _expand_eval_instruction(base_instruction: str, asset_index: int) -> str:
+    variant = _eval_variant(asset_index)
+    return f"{variant['prefix']}{base_instruction}" if variant["prefix"] else base_instruction
+
+
+def _pick_cases_for_cluster(snapshot: dict[str, Any], cluster: dict[str, Any]) -> list[dict[str, Any]]:
+    representative = set(cluster.get("representativeCaseIds", []))
+    cases = snapshot.get("cases", []) or []
+    by_representative = [case for case in cases if case.get("id") in representative]
+    if by_representative:
+        return by_representative
+    signals = set(cluster.get("failureSignals", []) or [])
+    return [case for case in cases if signals.intersection(extract_evaluation_failure_signals(case))]
+
+
+def _build_deterministic_eval_asset_record(
+    snapshot: dict[str, Any],
+    cluster: dict[str, Any],
+    case_item: dict[str, Any],
+    asset_index: int,
+    asset_type: str,
+    *,
+    llm_inference: bool = False,
+    generator: str = "evaluation_asset_generator_v1",
+    instruction_override: str | None = None,
+    input_override: str | None = None,
+    output_override: str | None = None,
+    expected_override: str | None = None,
+) -> dict[str, Any]:
+    history = [turn for turn in case_item.get("interaction", {}).get("messages", []) if turn.get("role") != "system"]
+    base_instruction = (
+        instruction_override
+        or case_item.get("interaction", {}).get("input", "")
+        or case_item.get("expectation", {}).get("expectedOutput", "")
+        or case_item.get("annotation", {}).get("failureNote", "")
+    )
+    variant = _eval_variant(asset_index)
+    expected = expected_override or case_item.get("expectation", {}).get("expectedOutput", "") or ""
+    output = output_override or (
+        case_item.get("interaction", {}).get("actualOutput", "")
+        if asset_type == "negative_cases"
+        else expected or case_item.get("annotation", {}).get("repairHint", "") or cluster.get("recommendedStrategy", {}).get("solution", "")
+    )
+    return {
+        "id": f"{snapshot.get('taskId', 'eval-task')}_{cluster['id']}_{asset_type}_{asset_index + 1:03d}",
+        "clusterId": cluster["id"],
+        "sourceCaseId": case_item.get("id", ""),
+        "assetType": asset_type,
+        "expansion": {
+            "mode": "strategy_batch_expansion",
+            "generator": generator,
+            "llmInference": llm_inference,
+            "strategyTemplate": cluster.get("recommendedStrategy", {}).get("strategyTemplate", ""),
+            "variant": variant["name"],
+            "variantIndex": asset_index % len(EVAL_BATCH_VARIANTS),
+        },
+        "instruction": instruction_override or _expand_eval_instruction(base_instruction, asset_index),
+        "input": input_override or "\n\n".join(
+            item
+            for item in [
+                "\n".join(case_item.get("context", {}).get("retrievedContexts", []) or []),
+                f"根因假设：{cluster.get('rootCauseHypothesis', '')}",
+                f"修复方向：{cluster.get('recommendedStrategy', {}).get('solution', '')}",
+                f"批量扩展策略：{variant['note']}",
+            ]
+            if item
+        ),
+        "output": output,
+        "system": "你是需要稳定遵守上下文、工具边界和输出约束的 AI 助手。",
+        **({"history": history} if len(history) > 1 else {}),
+        **({"expected": expected} if expected else {}),
+        "tags": [cluster["id"], *cluster.get("failureSignals", [])],
+    }
+
+
+def _generate_llm_eval_assets(
+    snapshot: dict[str, Any],
+    cluster: dict[str, Any],
+    source_cases: list[dict[str, Any]],
+    target_count: int,
+    asset_type: str,
+) -> list[dict[str, Any]]:
+    if not target_count or not source_cases:
+        return []
+    prompt_cases = [
+        {
+            "sourceCaseId": case.get("id"),
+            "input": case.get("interaction", {}).get("input", ""),
+            "actual": case.get("interaction", {}).get("actualOutput", ""),
+            "expected": case.get("expectation", {}).get("expectedOutput", ""),
+            "reason": (case.get("judgments") or [{}])[0].get("reason", ""),
+            "failureNote": case.get("annotation", {}).get("failureNote", ""),
+            "context": case.get("context", {}).get("retrievedContexts", []),
+        }
+        for case in source_cases[:5]
+    ]
+    result = call_doubao_json(
+        system_prompt=(
+            "你是 failure-to-dataset 数据资产生成器。根据根因假设和代表 badcase 生成可复核的数据资产候选。"
+            "不要编造统计数字，不要输出 markdown，只输出 JSON。"
+        ),
+        user_prompt=json.dumps(
+            {
+                "assetType": asset_type,
+                "targetCount": target_count,
+                "cluster": {
+                    "id": cluster.get("id"),
+                    "name": cluster.get("name"),
+                    "rootCauseHypothesis": cluster.get("rootCauseHypothesis"),
+                    "strategy": cluster.get("recommendedStrategy", {}),
+                },
+                "sourceCases": prompt_cases,
+                "requirements": [
+                    "每条资产必须围绕失败机制补充训练或回归覆盖。",
+                    "expected_output 必须可作为候选答案或评测期望。",
+                    "source_case_id 必须从 sourceCases.sourceCaseId 中选择。",
+                ],
+                "output_schema": {
+                    "items": [
+                        {
+                            "source_case_id": "string",
+                            "instruction": "string",
+                            "input": "string",
+                            "output": "string",
+                            "expected_output": "string",
+                        }
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        ),
+        temperature=0.35,
+        max_tokens=8000,
+    )
+    raw_items = result.get("items", []) if isinstance(result, dict) else []
+    case_by_id = {case.get("id"): case for case in source_cases}
+    assets: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(raw_items[:target_count]):
+        if not isinstance(raw_item, dict):
+            continue
+        source_case = case_by_id.get(str(raw_item.get("source_case_id", ""))) or source_cases[index % len(source_cases)]
+        assets.append(
+            _build_deterministic_eval_asset_record(
+                snapshot,
+                cluster,
+                source_case,
+                index,
+                asset_type,
+                llm_inference=True,
+                generator="evaluation_asset_llm_v1",
+                instruction_override=str(raw_item.get("instruction", "")).strip() or None,
+                input_override=str(raw_item.get("input", "")).strip() or None,
+                output_override=str(raw_item.get("output", "")).strip() or None,
+                expected_override=str(raw_item.get("expected_output", "")).strip() or None,
+            )
+        )
+    return assets
+
+
+def build_evaluation_asset_package(
+    snapshot: dict[str, Any],
+    preview: bool = False,
+    now: str | None = None,
+    llm_enabled: bool | None = None,
+) -> dict[str, Any]:
+    accepted_clusters = [
+        cluster
+        for cluster in snapshot.get("clusters", []) or []
+        if cluster.get("status") == "accepted" and int(cluster.get("recommendedStrategy", {}).get("count", 0) or 0) > 0
+    ]
+    preview_limit = 2 if preview else 10**9
+    generated_at = now or _utc_now_iso()
+    eval_cases: list[dict[str, Any]] = []
+    training_candidates: list[dict[str, Any]] = []
+    negative_cases: list[dict[str, Any]] = []
+    use_llm = _eval_llm_enabled(llm_enabled)
+
+    def build_cluster_assets(cluster: dict[str, Any]) -> list[dict[str, Any]]:
+        source_cases = _pick_cases_for_cluster(snapshot, cluster)
+        target_count = min(int(cluster.get("recommendedStrategy", {}).get("count", 0) or 0), preview_limit)
+        asset_type = cluster.get("recommendedStrategy", {}).get("assetType", "eval_cases")
+        if not source_cases or target_count <= 0:
+            return []
+        if use_llm:
+            try:
+                llm_assets = _generate_llm_eval_assets(snapshot, cluster, source_cases, target_count, asset_type)
+            except Exception:
+                llm_assets = []
+            if len(llm_assets) >= target_count:
+                return llm_assets[:target_count]
+            deterministic_tail = [
+                _build_deterministic_eval_asset_record(
+                    snapshot,
+                    cluster,
+                    source_cases[(len(llm_assets) + index) % len(source_cases)],
+                    len(llm_assets) + index,
+                    asset_type,
+                )
+                for index in range(target_count - len(llm_assets))
+            ]
+            return [*llm_assets, *deterministic_tail]
+        return [
+            _build_deterministic_eval_asset_record(
+                snapshot,
+                cluster,
+                source_cases[index % len(source_cases)],
+                index,
+                asset_type,
+            )
+            for index in range(target_count)
+        ]
+
+    with ThreadPoolExecutor(max_workers=max(1, min(EVALUATION_ASSET_CONCURRENCY, len(accepted_clusters) or 1))) as executor:
+        for cluster_assets in executor.map(build_cluster_assets, accepted_clusters):
+            for asset in cluster_assets:
+                if asset["assetType"] == "training_candidates":
+                    training_candidates.append(asset)
+                elif asset["assetType"] == "negative_cases":
+                    negative_cases.append(asset)
+                else:
+                    eval_cases.append(asset)
+
+    all_assets = [*eval_cases, *training_candidates, *negative_cases]
+    cases_by_id = {case.get("id"): case for case in snapshot.get("cases", []) or []}
+    clusters_by_id = {cluster.get("id"): cluster for cluster in accepted_clusters}
+    provenance = []
+    for asset in all_assets:
+        source_case = cases_by_id.get(asset["sourceCaseId"], {})
+        cluster = clusters_by_id.get(asset["clusterId"], {})
+        provenance.append({
+            "assetId": asset["id"],
+            "sourceFile": snapshot.get("sourceFile", ""),
+            "sourceCaseId": asset["sourceCaseId"],
+            "sourceRowId": source_case.get("provenance", {}).get("sourceRowId", ""),
+            "traceId": source_case.get("provenance", {}).get("traceId", ""),
+            "sessionId": source_case.get("provenance", {}).get("sessionId", ""),
+            "problemCluster": asset["clusterId"],
+            "problemClusterName": cluster.get("name", ""),
+            "rootCauseHypothesis": cluster.get("rootCauseHypothesis", ""),
+            "strategyTemplate": asset.get("expansion", {}).get("strategyTemplate", ""),
+            "strategySolution": cluster.get("recommendedStrategy", {}).get("solution", ""),
+            "assetType": asset["assetType"],
+            "llmInference": bool(asset.get("expansion", {}).get("llmInference")),
+            "generatedAt": generated_at,
+        })
+
+    rejected_clusters = [cluster for cluster in snapshot.get("clusters", []) or [] if cluster.get("status") == "rejected"]
+    pending_clusters = [cluster for cluster in snapshot.get("clusters", []) or [] if cluster.get("status") == "pending"]
+    any_llm = any(bool(asset.get("expansion", {}).get("llmInference")) for asset in all_assets)
+    quality_report = {
+        "source_file": snapshot.get("sourceFile", ""),
+        "raw_count": snapshot.get("stats", {}).get("rawCount", 0),
+        "evidence_count": snapshot.get("stats", {}).get("evidenceCount", 0),
+        "failed_count": snapshot.get("stats", {}).get("failedCount", 0),
+        "cluster_count": len(snapshot.get("clusters", []) or []),
+        "accepted_cluster_count": len(accepted_clusters),
+        "rejected_cluster_count": len(rejected_clusters),
+        "pending_cluster_count": len(pending_clusters),
+        "generation_mode": "strategy_batch_expansion",
+        "generator": "evaluation_asset_llm_v1" if any_llm else "evaluation_asset_generator_v1",
+        "llm_inference": any_llm,
+        "expanded_asset_count": len(all_assets),
+        "field_role_success_rate": snapshot.get("stats", {}).get("fieldRoleSuccessRate", 0),
+        "accepted_clusters": [
+            {
+                "id": cluster.get("id"),
+                "name": cluster.get("name"),
+                "case_count": cluster.get("caseCount"),
+                "asset_type": cluster.get("recommendedStrategy", {}).get("assetType"),
+                "count": cluster.get("recommendedStrategy", {}).get("count"),
+                "schema": cluster.get("recommendedStrategy", {}).get("schema"),
+                "root_cause_hypothesis": cluster.get("rootCauseHypothesis"),
+                "strategy_template": cluster.get("recommendedStrategy", {}).get("strategyTemplate"),
+                "strategy_solution": cluster.get("recommendedStrategy", {}).get("solution"),
+                "status": cluster.get("status"),
+            }
+            for cluster in accepted_clusters
+        ],
+        "rejected_clusters": [
+            {
+                "id": cluster.get("id"),
+                "name": cluster.get("name"),
+                "case_count": cluster.get("caseCount"),
+                "asset_type": cluster.get("recommendedStrategy", {}).get("assetType"),
+                "count": cluster.get("recommendedStrategy", {}).get("count"),
+                "root_cause_hypothesis": cluster.get("rootCauseHypothesis"),
+                "strategy_template": cluster.get("recommendedStrategy", {}).get("strategyTemplate"),
+                "status": cluster.get("status"),
+            }
+            for cluster in rejected_clusters
+        ],
+    }
+    return {
+        "taskId": snapshot.get("taskId", ""),
+        "runId": f"run_{int(__import__('time').time() * 1000)}",
+        "files": {
+            "batch_expanded_assets.jsonl": len(all_assets),
+            "eval_cases.jsonl": len(eval_cases),
+            "training_candidates.jsonl": len(training_candidates),
+            "negative_cases.jsonl": len(negative_cases),
+            "quality_report.json": 1,
+            "provenance.json": len(provenance),
+        },
+        "assets": {
+            "evalCases": eval_cases,
+            "trainingCandidates": training_candidates,
+            "negativeCases": negative_cases,
+            "qualityReport": quality_report,
+            "provenance": provenance,
+        },
+    }
 
 
 def compact_text(value: Any, limit: int = 240) -> str:
@@ -1340,7 +2446,51 @@ def health():
         "provider": "doubao",
         "configured": bool(ARK_API_KEY),
         "model": ARK_MODEL,
+        "concurrency": {
+            "generate": GENERATE_CONCURRENCY,
+            "generate_max": MAX_GENERATE_CONCURRENCY,
+            "quick_default": QUICK_GENERATE_DEFAULT_CONCURRENCY,
+            "quick_max": QUICK_GENERATE_MAX_CONCURRENCY,
+            "evaluation_assets": EVALUATION_ASSET_CONCURRENCY,
+        },
+        "evaluation": {
+            "normalizer": "rule_candidate",
+            "clusterer": "rule_bucket_optional_llm_label",
+            "asset_generator": "evaluation_asset_generator_v1",
+            "llm_enabled": EVALUATION_LLM_ENABLED,
+        },
     }
+
+
+@app.post("/evaluation/analyze")
+def evaluation_analyze(request: EvaluationAnalyzeRequest):
+    snapshot = build_evaluation_snapshot(
+        request.taskId,
+        request.sourceFile,
+        request.rows,
+        request.extractionMode or "rule",
+        request.now,
+        request.llmEnabled,
+    )
+    return snapshot
+
+
+@app.post("/evaluation/assets")
+def evaluation_assets(request: EvaluationAssetRequest):
+    package = build_evaluation_asset_package(
+        request.snapshot,
+        preview=request.preview,
+        now=request.now,
+        llm_enabled=request.llmEnabled,
+    )
+    next_snapshot = {
+        **request.snapshot,
+        "preview" if request.preview else "package": package,
+        "updatedAt": request.now or _utc_now_iso(),
+    }
+    if not request.preview:
+        next_snapshot["preview"] = request.snapshot.get("preview")
+    return {"snapshot": next_snapshot, "package": package}
 
 
 @app.post("/analyze")
@@ -1421,7 +2571,7 @@ class QuickGenerateRequest(BaseModel):
     multi_turn: bool = False
     target_per_seed: Annotated[int, Field(ge=1, le=100)] = 5
     filter_strength: Literal["loose", "medium", "strict"] = "medium"
-    concurrency: Annotated[int, Field(ge=1, le=10)] | None = None
+    concurrency: Annotated[int, Field(ge=1, le=32)] | None = None
     instruction_template: str | None = None
     system_prompt: str | None = None
     seed_instructions: Annotated[list[str], Field(max_length=100)] | None = None
@@ -2140,7 +3290,14 @@ def quick_generate(request: QuickGenerateRequest):
 
     threshold_map = {"loose": 0.88, "medium": 0.93, "strict": 0.97}
     dedup_threshold = threshold_map.get(request.filter_strength, 0.93)
-    worker_count = request.concurrency or GENERATE_CONCURRENCY
+    worker_count = max(
+        1,
+        min(
+            request.concurrency or QUICK_GENERATE_DEFAULT_CONCURRENCY,
+            QUICK_GENERATE_MAX_CONCURRENCY,
+            len(request.seeds) or 1,
+        ),
+    )
 
     all_items: list[dict] = []
     total_requested = len(request.seeds) * request.target_per_seed

@@ -6,8 +6,8 @@
 
 关联文档：
 
-- `docs/superpowers/specs/2026-05-21-复赛评测模式需求与里程碑.md`
-- `docs/superpowers/specs/2026-05-21-evaluation-mode-prd.md`
+- `docs/superpowers/specs/评测-评测-评测-2026-05-21-复赛评测模式需求与里程碑.md`
+- `docs/superpowers/specs/评测-评测-评测-2026-05-21-evaluation-mode-prd.md`
 - `docs/superpowers/prototypes/2026-05-21-evaluation-mode-wireframe-prototype.html`
 
 外部调研参考：

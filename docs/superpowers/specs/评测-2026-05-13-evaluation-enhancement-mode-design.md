@@ -6,7 +6,7 @@
 
 CorpusFlow 已进入 NEXTAI 赛事赛道三「研发效能·提质增效」复赛。复赛版本需要在现有「可控语料生成」基础上，形成更清晰的技术价值与业务闭环。
 
-此前 `2026-05-12-corpusflow-evaluation-enhancement-definition.md` 已明确一个重要边界：
+此前 `评测-评测-2026-05-12-corpusflow-evaluation-enhancement-definition.md` 已明确一个重要边界：
 
 ```text
 CorpusFlow 不做完整评测平台。

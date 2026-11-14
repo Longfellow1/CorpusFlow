@@ -2,7 +2,7 @@
 
 ## 文档目的
 
-本文档在 [CorpusFlow Takeover Design](/Users/Harland/Go/CorpusFlow/docs/superpowers/specs/2026-04-11-corpusflow-takeover-design.md:1) 和 [CorpusFlow PRD Spec](/Users/Harland/Go/CorpusFlow/docs/superpowers/specs/2026-04-11-corpusflow-prd-spec.md:1) 基础上，正式定义首期技术架构。
+本文档在 [CorpusFlow Takeover Design](/Users/Harland/Go/CorpusFlow/docs/superpowers/specs/设计-设计-设计-2026-04-11-corpusflow-takeover-design.md:1) 和 [CorpusFlow PRD Spec](/Users/Harland/Go/CorpusFlow/docs/superpowers/specs/设计-设计-设计-2026-04-11-corpusflow-prd-spec.md:1) 基础上，正式定义首期技术架构。
 
 本版架构不再采用“前端 + 单体 Node 后端内含算法”的形态，而改为一次拆干净的三层结构：
 

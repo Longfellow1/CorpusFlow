@@ -5,6 +5,8 @@ from src.app import (
     GenerateSeed,
     GenerateTaskConfig,
     QuickGenerateRequest,
+    build_evaluation_asset_package,
+    build_evaluation_snapshot,
     build_generate_prompt,
     build_instruct_prompt,
     build_prompt_context,
@@ -727,6 +729,194 @@ class GenerationFrameTests(unittest.TestCase):
             self.assertEqual(result["stats"]["pass_rate"], 1.0)
         finally:
             app_module.quick_generate_for_seed = original_quick_generate_for_seed
+
+    def test_quick_generate_clamps_concurrency_to_runtime_limit(self):
+        import src.app as app_module
+
+        original_executor = app_module.ThreadPoolExecutor
+        original_generate = app_module.generate_quick_seed_to_target
+        original_default = app_module.QUICK_GENERATE_DEFAULT_CONCURRENCY
+        original_max = app_module.QUICK_GENERATE_MAX_CONCURRENCY
+        observed_workers: list[int] = []
+
+        class SpyExecutor(original_executor):
+            def __init__(self, *args, **kwargs):
+                max_workers = kwargs.get("max_workers")
+                if max_workers is None and args:
+                    max_workers = args[0]
+                observed_workers.append(max_workers)
+                super().__init__(*args, **kwargs)
+
+        try:
+            app_module.ThreadPoolExecutor = SpyExecutor
+            app_module.QUICK_GENERATE_DEFAULT_CONCURRENCY = 12
+            app_module.QUICK_GENERATE_MAX_CONCURRENCY = 7
+            app_module.generate_quick_seed_to_target = lambda seed, *_args, **_kwargs: [
+                {"q": f"{seed}-generated", "a": "answer"}
+            ]
+
+            result = quick_generate(
+                QuickGenerateRequest(
+                    job_id="test-concurrency-clamp",
+                    seeds=[f"seed-{index}" for index in range(10)],
+                    type="qa",
+                    target_per_seed=1,
+                    concurrency=20,
+                )
+            )
+
+            self.assertEqual(observed_workers[0], 7)
+            self.assertEqual(len(result["items"]), 10)
+        finally:
+            app_module.ThreadPoolExecutor = original_executor
+            app_module.generate_quick_seed_to_target = original_generate
+            app_module.QUICK_GENERATE_DEFAULT_CONCURRENCY = original_default
+            app_module.QUICK_GENERATE_MAX_CONCURRENCY = original_max
+
+    def test_evaluation_snapshot_normalizes_rows_and_clusters_failures(self):
+        snapshot = build_evaluation_snapshot(
+            "eval-task-1",
+            "mixed-eval.json",
+            [
+                {
+                    "eval_id": "r1",
+                    "user_input": "那附近还有停车场吗？",
+                    "answer": "请告诉我地点。",
+                    "reference": "继承上一轮目的地并查询停车场。",
+                    "score": 0.1,
+                    "comment": "多轮上下文丢失。",
+                    "session_id": "s1",
+                },
+                {
+                    "id": "r2",
+                    "prompt": "输出 JSON，字段只保留 name",
+                    "completion": "好的，名字是 A。",
+                    "ideal": "{\"name\":\"A\"}",
+                    "pass": "false",
+                    "reason": "格式错误。",
+                },
+            ],
+            extraction_mode="rule",
+            now="2026-05-22T00:00:00.000Z",
+        )
+
+        self.assertEqual(snapshot["stats"]["rawCount"], 2)
+        self.assertEqual(snapshot["stats"]["evidenceCount"], 2)
+        self.assertEqual(snapshot["stats"]["failedCount"], 2)
+        self.assertEqual(snapshot["cases"][0]["sourceCaseId"], "r1")
+        self.assertEqual(snapshot["cases"][0]["completeness"], "A")
+        self.assertIn("interaction.input", snapshot["cases"][0]["provenance"]["fieldMapping"])
+        self.assertIn("问题集中在", snapshot["oneSentenceConclusion"])
+        self.assertTrue(any(cluster["name"] == "多轮上下文承接失败" for cluster in snapshot["clusters"]))
+        self.assertTrue(any(cluster["name"] == "格式或结构错误" for cluster in snapshot["clusters"]))
+
+    def test_evaluation_snapshot_keeps_migration_signals_precise(self):
+        snapshot = build_evaluation_snapshot(
+            "eval-task-migration",
+            "migration_badcase_dimensions.jsonl",
+            [
+                {
+                    "case_id": "migration-domain-error-001",
+                    "user_input": "去工人的呗",
+                    "actual_output": "我不太明白您的意思，您是想去某个具体的地方吗？",
+                    "expected_behavior": "应落到正确车载技能域/工具 target_agent=mapU，不要落到 actual_agent=chat。",
+                    "grading_result": "fail",
+                    "failure_note": "落域错误 / wrong tool / 路由错误：target_agent=mapU，actual_agent=chat。",
+                },
+                {
+                    "case_id": "migration-complaint-001",
+                    "user_input": "太慢了",
+                    "actual_output": "您是觉得语音回复速度慢，还是觉得导航规划速度慢呀？",
+                    "expected_behavior": "应识别用户负向反馈/投诉，优先短句安抚和纠偏。",
+                    "grading_result": "fail",
+                    "failure_note": "负向情绪/投诉 badcase：太慢了；当前回答未充分解决体验问题。",
+                },
+            ],
+            extraction_mode="rule",
+            now="2026-05-25T00:00:00.000Z",
+        )
+
+        cluster_names = {cluster["name"] for cluster in snapshot["clusters"]}
+        all_signals = {
+            signal
+            for cluster in snapshot["clusters"]
+            for signal in cluster["failureSignals"]
+        }
+
+        self.assertIn("工具选择错误", cluster_names)
+        self.assertIn("负向情绪或投诉处理不足", cluster_names)
+        self.assertNotIn("应调用工具但未调用", cluster_names)
+        self.assertNotIn("tool_not_called", all_signals)
+        self.assertNotIn("safety_boundary", all_signals)
+
+    def test_evaluation_snapshot_maps_raw_chat_eval_fields_to_signals(self):
+        snapshot = build_evaluation_snapshot(
+            "raw-chat-eval",
+            "badcases_answer_quality.jsonl",
+            [
+                {
+                    "run_id": "mt_migration90_20260515_095956_e4a4c8",
+                    "query": "明天的天气怎么样",
+                    "final_text_snippet": "搜索2026-05-16的天气怎么样 天气失败，请稍后重试（工具：get_weather）",
+                    "corrected_expected_mode": "tool_call",
+                    "corrected_expected_tool": "get_weather",
+                    "got_tool": "get_weather",
+                    "tool_status": "fallback_or_error",
+                    "result_quality": "fallback_search",
+                    "effective_query": "2026-05-16的天气怎么样",
+                    "passed": "False",
+                    "fail_reason": "wrong_mode",
+                    "answer_quality": "unusable",
+                    "answer_quality_reason": "fallback_search made the answer unusable",
+                }
+            ],
+            extraction_mode="rule",
+            now="2026-05-25T00:00:00.000Z",
+        )
+        tags = snapshot["cases"][0]["annotation"]["tags"]
+
+        self.assertIn("memory_missing", tags)
+        self.assertIn("wrong_tool", tags)
+        self.assertIn("weak_answer", tags)
+        self.assertNotIn("unknown_failure", tags)
+        self.assertNotIn("tool_not_called", tags)
+        self.assertNotIn("safety_boundary", tags)
+
+    def test_evaluation_asset_package_preserves_counts_and_provenance(self):
+        snapshot = build_evaluation_snapshot(
+            "eval-task-2",
+            "demo.csv",
+            [
+                {
+                    "id": "r1",
+                    "query": "帮我找顺路加油站，不要绕太远",
+                    "actual": "为你推荐附近加油站",
+                    "expected": "推荐顺路加油站，并说明绕行成本",
+                    "passed": False,
+                    "reason": "遗漏顺路约束和绕行成本",
+                }
+            ],
+            now="2026-05-22T00:00:00.000Z",
+        )
+        snapshot["clusters"][0]["recommendedStrategy"]["count"] = 3
+        packaged = build_evaluation_asset_package(
+            snapshot,
+            preview=False,
+            now="2026-05-22T00:01:00.000Z",
+        )
+
+        package_total = (
+            packaged["files"]["eval_cases.jsonl"]
+            + packaged["files"]["training_candidates.jsonl"]
+            + packaged["files"]["negative_cases.jsonl"]
+        )
+
+        self.assertEqual(package_total, 3)
+        self.assertEqual(packaged["files"]["batch_expanded_assets.jsonl"], 3)
+        self.assertEqual(len(packaged["assets"]["provenance"]), 3)
+        self.assertEqual(packaged["assets"]["provenance"][0]["sourceFile"], "demo.csv")
+        self.assertFalse(packaged["assets"]["provenance"][0]["llmInference"])
+        self.assertEqual(packaged["assets"]["qualityReport"]["generator"], "evaluation_asset_generator_v1")
 
 if __name__ == "__main__":
     unittest.main()

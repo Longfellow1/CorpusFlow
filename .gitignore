@@ -43,6 +43,10 @@ yarn-debug.log*
 
 # Runtime data
 data/
+tmp/
+.corpusflow/
+.codegraph/
+test-results/
 
 # Internal docs & assets — keep repo clean, nothing proprietary in the open
 .claude/
