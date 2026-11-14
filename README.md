@@ -165,11 +165,23 @@ docker compose up --build
 ```bash
 PORT=3000
 ALGORITHM_BASE_URL=http://127.0.0.1:8001
+STORAGE_BACKEND=auto
+DATABASE_URL=
+DATABASE_SSL_MODE=auto
+DATABASE_POOL_MAX=5
+JWT_SECRET=change-me
+CORS_ALLOWED_ORIGINS=
 
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_API_KEY=your_key_here
 ARK_MODEL=doubao-seed-1-6-250615
 ARK_TIMEOUT_SECONDS=120
+GENERATE_CONCURRENCY=8
+MAX_GENERATE_CONCURRENCY=16
+QUICK_GENERATE_DEFAULT_CONCURRENCY=8
+QUICK_GENERATE_MAX_CONCURRENCY=16
+EVALUATION_ASSET_CONCURRENCY=4
+EVALUATION_LLM_ENABLED=false
 
 VITE_API_BASE_URL=
 ```
@@ -177,6 +189,11 @@ VITE_API_BASE_URL=
 说明：
 
 - `ARK_API_KEY` 只放后端环境变量，不要放进前端或公开材料。
+- Render 持久化任务时设置 `DATABASE_URL` 为 Render Postgres Internal Database URL，并把 `STORAGE_BACKEND` 设为 `postgres`。
+- Render 生产环境建议设置 `DATABASE_SSL_MODE=auto` 或 `require`、`JWT_SECRET=<强随机值>`、`CORS_ALLOWED_ORIGINS=https://corpusflow-demo.pages.dev`。
+- 算法服务默认 seed 级并发为 8，生产可通过 `GENERATE_CONCURRENCY`、`QUICK_GENERATE_DEFAULT_CONCURRENCY` 调整，建议免费 Render 不超过 8-12，付费实例再拉到 16。
+- 评测模式后端会调用 FastAPI 的 `/evaluation/analyze` 和 `/evaluation/assets`；`EVALUATION_LLM_ENABLED=false` 时走规则 Normalizer / Clusterer / Asset Generator，设为 `true` 后启用 LLM 命名和资产生成，失败仍会规则降级。
+- `EVALUATION_ASSET_CONCURRENCY` 控制评测资产按问题族并发生成，免费 Render 建议 2-4，资源更高时再拉到 8+。
 - `VITE_API_BASE_URL` 只用于前端指向 API 地址，部署到 Cloudflare Pages 时可设置为公网 API 域名。
 - 本地开发时 `VITE_API_BASE_URL` 可以留空，走同源 API。
 
@@ -196,8 +213,13 @@ npm run lint         # TypeScript 类型检查
 
 ```bash
 node --import tsx --test tests/*.test.ts
+npm run eval:evaluation-agent
+npm run eval:evaluation-agent -- --tier=full
+npm run eval:signal-audit
 cd algorithm && uv run python -m unittest tests.test_generation_frame
 ```
+
+`npm run eval:evaluation-agent` 默认跑 smoke；`-- --tier=full` 会加载 `fixtures/evaluation/migration_badcase_full.jsonl` 的 663 条 full fixture。`npm run eval:signal-audit` 会对比旧/新 signal 规则的召回、unknown rate 和 `tool_not_called` / `safety_boundary` 误报率。
 
 健康检查：
 

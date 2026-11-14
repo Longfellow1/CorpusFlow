@@ -37,7 +37,10 @@
     "lint": "tsc --noEmit",
     "keepalive": "tsx scripts/keepalive.ts",
     "test:regression": "tsx scripts/regression/test-regression.ts",
-    "test:evaluate": "tsx scripts/regression/evaluate-prompts.ts"
+    "test:evaluate": "tsx scripts/regression/evaluate-prompts.ts",
+    "eval:evaluation-agent": "tsx scripts/evaluation-agent-eval.ts",
+    "eval:build-fixtures": "python3 scripts/build-evaluation-fixtures.py",
+    "eval:signal-audit": "tsx scripts/evaluation-signal-audit.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -48,16 +51,18 @@
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pg": "^8.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.14.0",
-    "@tailwindcss/vite": "^4.1.14",
+    "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",

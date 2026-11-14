@@ -81,6 +81,7 @@ export type FailureSignal =
   | "wrong_tool"
   | "constraint_missing"
   | "weak_answer"
+  | "negative_emotion"
   | "safety_boundary"
   | "format_error"
   | "retrieval_miss"
@@ -122,8 +123,8 @@ export type EvalAssetRecord = {
   assetType: EvalAssetType;
   expansion: {
     mode: "strategy_batch_expansion";
-    generator: "batch_strategy_expander_v0";
-    llmInference: false;
+    generator: string;
+    llmInference: boolean;
     strategyTemplate: string;
     variant: string;
     variantIndex: number;
@@ -148,10 +149,18 @@ export type EvalAssetPackage = {
     qualityReport: Record<string, unknown>;
     provenance: Array<{
       assetId: string;
+      sourceFile: string;
       sourceCaseId: string;
       sourceRowId: string;
+      traceId: string;
+      sessionId: string;
       problemCluster: string;
+      problemClusterName: string;
+      rootCauseHypothesis: string;
+      strategyTemplate: string;
+      strategySolution: string;
       assetType: EvalAssetType;
+      llmInference: boolean;
       generatedAt: string;
     }>;
   };
@@ -272,6 +281,8 @@ const ROLE_ALIASES: Record<EvidenceRole, string[]> = {
     "response",
     "completion",
     "answer",
+    "finaltextsnippet",
+    "final_text_snippet",
     "assistant",
     "modeloutput",
     "model_output",
@@ -322,6 +333,10 @@ const ROLE_ALIASES: Record<EvidenceRole, string[]> = {
     "expected_tools",
     "toolresults",
     "tool_results",
+    "expectedtool",
+    "expected_tool",
+    "gottool",
+    "got_tool",
     "action",
     "工具",
     "工具调用",
@@ -361,6 +376,10 @@ const ROLE_ALIASES: Record<EvidenceRole, string[]> = {
     "prompt_version",
     "error",
     "status",
+    "toolstatus",
+    "tool_status",
+    "resultquality",
+    "result_quality",
     "耗时",
     "模型",
     "版本",
@@ -372,6 +391,16 @@ const ROLE_ALIASES: Record<EvidenceRole, string[]> = {
     "failure_note",
     "repairhint",
     "repair_hint",
+    "failreason",
+    "fail_reason",
+    "correctedfailreason",
+    "corrected_fail_reason",
+    "answerquality",
+    "answer_quality",
+    "answerqualityreason",
+    "answer_quality_reason",
+    "effectivequery",
+    "effective_query",
     "severity",
     "tag",
     "tags",
@@ -413,7 +442,7 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     schema: "sharegpt_history",
     strategyTemplate: "multiturn_context_repair",
     solution: "补充带上一轮信息、指代词和当前任务的多轮训练候选。",
-    keywords: ["多轮", "上下文", "history", "memory", "记忆", "上一轮", "承接", "指代", "coreference", "忘记"],
+    keywords: ["多轮", "上下文", "history", "memory", "记忆", "上一轮", "承接", "指代", "coreference", "忘记", "effective_query", "effective query", "上下文污染"],
   },
   coreference_failed: {
     name: "指代解析失败",
@@ -433,7 +462,21 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     schema: "eval_case_jsonl",
     strategyTemplate: "tool_call_boundary_eval",
     solution: "补充需要调用工具的回归评测用例，并标明 expected tool。",
-    keywords: ["未调用", "没调用", "tool_not_called", "tool not called", "工具", "action missing", "查询", "导航", "检索"],
+    keywords: [
+      "未调用",
+      "没调用",
+      "没有调用",
+      "未触发工具",
+      "没有触发工具",
+      "未发起工具",
+      "未执行工具",
+      "tool_not_called",
+      "tool not called",
+      "no tool call",
+      "missing tool call",
+      "tool call missing",
+      "action missing",
+    ],
   },
   wrong_tool: {
     name: "工具选择错误",
@@ -443,7 +486,7 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     schema: "eval_case_jsonl",
     strategyTemplate: "tool_routing_eval",
     solution: "生成不同工具边界和相近意图的回归评测用例。",
-    keywords: ["错工具", "wrong tool", "工具选择", "落域", "路由", "参数错误", "domain"],
+    keywords: ["错工具", "wrong tool", "wrong_mode", "wrong mode", "模式错误", "工具选择", "落域", "路由", "参数错误", "domain"],
   },
   constraint_missing: {
     name: "复合约束遗漏",
@@ -455,6 +498,16 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     solution: "生成包含多个显式约束的指令微调候选。",
     keywords: ["约束", "遗漏", "漏", "复合", "限制", "条件", "排序", "数量", "只满足", "constraint"],
   },
+  negative_emotion: {
+    name: "负向情绪或投诉处理不足",
+    summary: "用户表达负向情绪、投诉或体验失败，但回答没有先识别问题并给出纠偏路径。",
+    hypothesis: "缺少负向反馈识别、安抚、澄清和故障处理的对照样本。",
+    assetType: "training_candidates",
+    schema: "alpaca",
+    strategyTemplate: "negative_feedback_repair",
+    solution: "补充显式负向反馈、投诉和体验失败场景的标准应答样本。",
+    keywords: ["负向情绪", "显式负向", "投诉", "抱怨", "体验失败", "情绪识别", "纠偏", "negative emotion", "complaint"],
+  },
   weak_answer: {
     name: "弱答或空泛回答",
     summary: "回答缺少可执行信息，或用泛泛话术替代具体结果。",
@@ -463,7 +516,7 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     schema: "alpaca",
     strategyTemplate: "specific_answer_repair",
     solution: "补充具体、可执行、带必要解释的标准回答样本。",
-    keywords: ["空泛", "泛化", "弱答", "不具体", "无帮助", "不知道", "含糊", "vague", "generic"],
+    keywords: ["空泛", "泛化", "弱答", "不具体", "无帮助", "不知道", "含糊", "vague", "generic", "answer_quality", "unusable", "fallback", "fallback_search", "无法获取", "稍后重试", "空结果", "不可用"],
   },
   safety_boundary: {
     name: "安全拒识边界不稳",
@@ -473,7 +526,7 @@ const SIGNAL_CONFIG: Record<FailureSignal, {
     schema: "eval_case_jsonl",
     strategyTemplate: "safety_boundary_eval",
     solution: "补充拒识、正常放行和安全替代回答的边界样本。",
-    keywords: ["安全", "拒识", "拒答", "敏感", "违规", "越狱", "unsafe", "safety", "blocked"],
+    keywords: ["安全边界", "安全拒识", "高风险", "危险动作", "拒绝执行危险", "敏感", "违规", "越狱", "unsafe", "safety", "blocked"],
   },
   format_error: {
     name: "格式或结构错误",
@@ -913,6 +966,28 @@ function getMappedCell(raw: Record<string, string>, role: EvidenceRole, mapping:
   return match ? raw[match.header] || "" : "";
 }
 
+const SUPPLEMENTAL_FAILURE_HEADERS = new Set([
+  "failreason",
+  "correctedfailreason",
+  "answerquality",
+  "answerqualityreason",
+  "effectivequery",
+  "toolstatus",
+  "resultquality",
+  "expectedmode",
+  "correctedexpectedmode",
+  "expectedtool",
+  "correctedexpectedtool",
+  "gottool",
+]);
+
+function collectSupplementalFailureText(raw: Record<string, string>, usedHeaders: Set<string>) {
+  return Object.entries(raw)
+    .filter(([key, value]) => value.trim() && (!usedHeaders.has(key) || SUPPLEMENTAL_FAILURE_HEADERS.has(cleanHeader(key))) && SUPPLEMENTAL_FAILURE_HEADERS.has(cleanHeader(key)))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
 function parseBoolean(value: string): boolean | null {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
@@ -1087,11 +1162,13 @@ export function normalizeEvidenceRows(args: {
     const tooling = getMappedCell(raw, "tooling", rowMapping);
     const judgment = getMappedCell(raw, "judgment", rowMapping);
     const annotation = getMappedCell(raw, "annotation", rowMapping);
+    const usedHeaders = new Set(Object.values(rowMapping).filter((header): header is string => Boolean(header)));
+    const annotationText = [annotation, collectSupplementalFailureText(raw, usedHeaders)].filter(Boolean).join("\n");
     const runtime = getMappedCell(raw, "runtime", rowMapping);
     const identity = getMappedCell(raw, "identity", rowMapping);
     const pass = parseBoolean(judgment);
     const score = pass === null ? parseNumber(judgment) : null;
-    const failed = isFailedCase(pass, score, judgment, annotation);
+    const failed = isFailedCase(pass, score, judgment, annotationText);
     const messages = parseMessages(input);
     const lastUserMessage = [...messages].reverse().find((turn) => turn.role === "user")?.content;
     const completeness = calculateCompleteness({
@@ -1099,7 +1176,7 @@ export function normalizeEvidenceRows(args: {
       actual,
       expected,
       judgmentText: judgment,
-      annotationText: annotation,
+      annotationText,
     });
     const confidenceValues = Object.values(roleConfidence).filter((value): value is number => typeof value === "number");
     const confidence = confidenceValues.length > 0
@@ -1142,11 +1219,11 @@ export function normalizeEvidenceRows(args: {
         name: "source_judgment",
         pass,
         score,
-        reason: judgment || annotation,
-        source: judgment ? "eval" : annotation ? "human" : "rule",
+        reason: judgment || annotationText,
+        source: judgment ? "eval" : annotationText ? "human" : "rule",
       }],
       annotation: {
-        failureNote: annotation || judgment,
+        failureNote: annotationText || judgment,
         repairHint: "",
         severity: severityHeader && ["low", "medium", "high"].includes(raw[severityHeader])
           ? raw[severityHeader] as "low" | "medium" | "high"
@@ -1447,22 +1524,36 @@ export function buildEvalAssetPackage(snapshot: EvaluationSnapshot, options?: { 
 
   const provenance = [...evalCases, ...trainingCandidates, ...negativeCases].map((asset) => {
     const sourceCase = snapshot.cases.find((caseItem) => caseItem.id === asset.sourceCaseId);
+    const cluster = acceptedClusters.find((item) => item.id === asset.clusterId);
     return {
       assetId: asset.id,
+      sourceFile: snapshot.sourceFile,
       sourceCaseId: asset.sourceCaseId,
       sourceRowId: sourceCase?.provenance.sourceRowId || "",
+      traceId: sourceCase?.provenance.traceId || "",
+      sessionId: sourceCase?.provenance.sessionId || "",
       problemCluster: asset.clusterId,
+      problemClusterName: cluster?.name || "",
+      rootCauseHypothesis: cluster?.rootCauseHypothesis || "",
+      strategyTemplate: asset.expansion.strategyTemplate,
+      strategySolution: cluster?.recommendedStrategy.solution || "",
       assetType: asset.assetType,
+      llmInference: asset.expansion.llmInference,
       generatedAt,
     };
   });
 
+  const rejectedClusters = snapshot.clusters.filter((cluster) => cluster.status === "rejected");
+  const pendingClusters = snapshot.clusters.filter((cluster) => cluster.status === "pending");
   const qualityReport = {
     source_file: snapshot.sourceFile,
     raw_count: snapshot.stats.rawCount,
     evidence_count: snapshot.stats.evidenceCount,
     failed_count: snapshot.stats.failedCount,
-    cluster_count: acceptedClusters.length,
+    cluster_count: snapshot.clusters.length,
+    accepted_cluster_count: acceptedClusters.length,
+    rejected_cluster_count: rejectedClusters.length,
+    pending_cluster_count: pendingClusters.length,
     generation_mode: "strategy_batch_expansion",
     generator: "batch_strategy_expander_v0",
     llm_inference: false,
@@ -1474,6 +1565,21 @@ export function buildEvalAssetPackage(snapshot: EvaluationSnapshot, options?: { 
       case_count: cluster.caseCount,
       asset_type: cluster.recommendedStrategy.assetType,
       count: cluster.recommendedStrategy.count,
+      schema: cluster.recommendedStrategy.schema,
+      root_cause_hypothesis: cluster.rootCauseHypothesis,
+      strategy_template: cluster.recommendedStrategy.strategyTemplate,
+      strategy_solution: cluster.recommendedStrategy.solution,
+      status: cluster.status,
+    })),
+    rejected_clusters: rejectedClusters.map((cluster) => ({
+      id: cluster.id,
+      name: cluster.name,
+      case_count: cluster.caseCount,
+      asset_type: cluster.recommendedStrategy.assetType,
+      count: cluster.recommendedStrategy.count,
+      root_cause_hypothesis: cluster.rootCauseHypothesis,
+      strategy_template: cluster.recommendedStrategy.strategyTemplate,
+      status: cluster.status,
     })),
   };
 
@@ -1518,6 +1624,99 @@ function toJsonl(records: unknown[]) {
   return records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "";
 }
 
+function fieldLabel(chinese: string, english: string) {
+  return `${chinese}（${english}）`;
+}
+
+function translatedHistory(history?: Array<{ role: "user" | "assistant"; content: string }>) {
+  return history?.map((turn) => ({
+    [fieldLabel("角色", "role")]: turn.role,
+    [fieldLabel("内容", "content")]: turn.content,
+  }));
+}
+
+function translatedExpansion(asset: EvalAssetRecord) {
+  return {
+    [fieldLabel("扩增模式", "mode")]: asset.expansion.mode,
+    [fieldLabel("生成器", "generator")]: asset.expansion.generator,
+    [fieldLabel("是否LLM推理", "llm_inference")]: asset.expansion.llmInference,
+    [fieldLabel("策略模板", "strategy_template")]: asset.expansion.strategyTemplate,
+    [fieldLabel("扩增变体", "variant")]: asset.expansion.variant,
+  };
+}
+
+function translatedQualityReport(report: Record<string, unknown>) {
+  const acceptedClusters = Array.isArray(report.accepted_clusters)
+    ? report.accepted_clusters.map((cluster) => {
+      const record = cluster as Record<string, unknown>;
+      return {
+        [fieldLabel("根因编号", "id")]: record.id,
+        [fieldLabel("根因名称", "name")]: record.name,
+        [fieldLabel("Case数量", "case_count")]: record.case_count,
+        [fieldLabel("资产类型", "asset_type")]: record.asset_type,
+        [fieldLabel("生成数量", "count")]: record.count,
+        [fieldLabel("Schema", "schema")]: record.schema,
+        [fieldLabel("根因假设", "root_cause_hypothesis")]: record.root_cause_hypothesis,
+        [fieldLabel("生成策略", "strategy_template")]: record.strategy_template,
+        [fieldLabel("修复方向", "strategy_solution")]: record.strategy_solution,
+        [fieldLabel("状态", "status")]: record.status,
+      };
+    })
+    : [];
+  const rejectedClusters = Array.isArray(report.rejected_clusters)
+    ? report.rejected_clusters.map((cluster) => {
+      const record = cluster as Record<string, unknown>;
+      return {
+        [fieldLabel("根因编号", "id")]: record.id,
+        [fieldLabel("根因名称", "name")]: record.name,
+        [fieldLabel("Case数量", "case_count")]: record.case_count,
+        [fieldLabel("资产类型", "asset_type")]: record.asset_type,
+        [fieldLabel("建议数量", "count")]: record.count,
+        [fieldLabel("根因假设", "root_cause_hypothesis")]: record.root_cause_hypothesis,
+        [fieldLabel("生成策略", "strategy_template")]: record.strategy_template,
+        [fieldLabel("状态", "status")]: record.status,
+      };
+    })
+    : [];
+
+  return {
+    [fieldLabel("来源文件", "source_file")]: report.source_file,
+    [fieldLabel("原始行数", "raw_count")]: report.raw_count,
+    [fieldLabel("证据Case数", "evidence_count")]: report.evidence_count,
+    [fieldLabel("失败Case数", "failed_count")]: report.failed_count,
+    [fieldLabel("根因聚类数", "cluster_count")]: report.cluster_count,
+    [fieldLabel("已采纳根因数", "accepted_cluster_count")]: report.accepted_cluster_count,
+    [fieldLabel("已拒绝根因数", "rejected_cluster_count")]: report.rejected_cluster_count,
+    [fieldLabel("待确认根因数", "pending_cluster_count")]: report.pending_cluster_count,
+    [fieldLabel("生成模式", "generation_mode")]: report.generation_mode,
+    [fieldLabel("生成器", "generator")]: report.generator,
+    [fieldLabel("是否LLM推理", "llm_inference")]: report.llm_inference,
+    [fieldLabel("扩增资产数", "expanded_asset_count")]: report.expanded_asset_count,
+    [fieldLabel("字段识别成功率", "field_role_success_rate")]: report.field_role_success_rate,
+    [fieldLabel("已采纳根因", "accepted_clusters")]: acceptedClusters,
+    [fieldLabel("已拒绝根因", "rejected_clusters")]: rejectedClusters,
+  };
+}
+
+function translatedProvenance(assetPackage: EvalAssetPackage) {
+  return assetPackage.assets.provenance.map((source) => ({
+    [fieldLabel("资产编号", "assetId")]: source.assetId,
+    [fieldLabel("来源文件", "sourceFile")]: source.sourceFile,
+    [fieldLabel("来源Case编号", "sourceCaseId")]: source.sourceCaseId,
+    [fieldLabel("来源行编号", "sourceRowId")]: source.sourceRowId,
+    [fieldLabel("Trace编号", "traceId")]: source.traceId,
+    [fieldLabel("会话编号", "sessionId")]: source.sessionId,
+    [fieldLabel("根因编号", "problemCluster")]: source.problemCluster,
+    [fieldLabel("根因名称", "problemClusterName")]: source.problemClusterName,
+    [fieldLabel("根因假设", "rootCauseHypothesis")]: source.rootCauseHypothesis,
+    [fieldLabel("生成策略", "strategyTemplate")]: source.strategyTemplate,
+    [fieldLabel("修复方向", "strategySolution")]: source.strategySolution,
+    [fieldLabel("资产类型", "assetType")]: source.assetType,
+    [fieldLabel("是否LLM推理", "llm_inference")]: source.llmInference,
+    [fieldLabel("生成时间", "generatedAt")]: source.generatedAt,
+  }));
+}
+
 export function serializeEvalAssetFile(assetPackage: EvalAssetPackage, fileName: string) {
   const allAssets = [
     ...assetPackage.assets.trainingCandidates,
@@ -1528,50 +1727,60 @@ export function serializeEvalAssetFile(assetPackage: EvalAssetPackage, fileName:
   switch (fileName) {
     case "batch_expanded_assets.jsonl":
       return toJsonl(allAssets.map((asset) => ({
-        asset_type: asset.assetType,
-        expansion: {
-          mode: asset.expansion.mode,
-          generator: asset.expansion.generator,
-          llm_inference: asset.expansion.llmInference,
-          strategy_template: asset.expansion.strategyTemplate,
-          variant: asset.expansion.variant,
-        },
-        cluster_id: asset.clusterId,
-        source_case_id: asset.sourceCaseId,
-        system: asset.system,
-        instruction: asset.instruction,
-        input: asset.input,
-        output: asset.output,
-        ...(asset.expected ? { expected: asset.expected } : {}),
-        ...(asset.history ? { history: asset.history } : {}),
-        tags: asset.tags,
+        [fieldLabel("资产编号", "id")]: asset.id,
+        [fieldLabel("资产类型", "asset_type")]: asset.assetType,
+        [fieldLabel("扩增信息", "expansion")]: translatedExpansion(asset),
+        [fieldLabel("根因编号", "cluster_id")]: asset.clusterId,
+        [fieldLabel("来源Case", "source_case_id")]: asset.sourceCaseId,
+        [fieldLabel("系统提示", "system")]: asset.system,
+        [fieldLabel("指令", "instruction")]: asset.instruction,
+        [fieldLabel("输入", "input")]: asset.input,
+        [fieldLabel("输出", "output")]: asset.output,
+        ...(asset.expected ? { [fieldLabel("期望输出", "expected_output")]: asset.expected } : {}),
+        ...(asset.history ? { [fieldLabel("多轮历史", "history")]: translatedHistory(asset.history) } : {}),
+        [fieldLabel("标签", "tags")]: asset.tags,
       })));
     case "eval_cases.jsonl":
       return toJsonl(assetPackage.assets.evalCases.map((asset) => ({
-        id: asset.id,
-        input: asset.instruction,
-        expected_output: asset.expected || asset.output,
-        tags: asset.tags,
+        [fieldLabel("样本编号", "id")]: asset.id,
+        [fieldLabel("资产类型", "asset_type")]: asset.assetType,
+        [fieldLabel("根因编号", "cluster_id")]: asset.clusterId,
+        [fieldLabel("来源Case", "source_case_id")]: asset.sourceCaseId,
+        [fieldLabel("评测输入", "input")]: asset.instruction,
+        [fieldLabel("期望输出", "expected_output")]: asset.expected || asset.output,
+        [fieldLabel("是否LLM推理", "llm_inference")]: asset.expansion.llmInference,
+        [fieldLabel("标签", "tags")]: asset.tags,
       })));
     case "training_candidates.jsonl":
       return toJsonl(assetPackage.assets.trainingCandidates.map((asset) => ({
-        system: asset.system,
-        instruction: asset.instruction,
-        input: asset.input,
-        output: asset.output,
-        ...(asset.history ? { history: asset.history } : {}),
+        [fieldLabel("资产编号", "id")]: asset.id,
+        [fieldLabel("资产类型", "asset_type")]: asset.assetType,
+        [fieldLabel("根因编号", "cluster_id")]: asset.clusterId,
+        [fieldLabel("来源Case", "source_case_id")]: asset.sourceCaseId,
+        [fieldLabel("系统提示", "system")]: asset.system,
+        [fieldLabel("指令", "instruction")]: asset.instruction,
+        [fieldLabel("输入", "input")]: asset.input,
+        [fieldLabel("输出", "output")]: asset.output,
+        ...(asset.expected ? { [fieldLabel("期望输出", "expected_output")]: asset.expected } : {}),
+        [fieldLabel("是否LLM推理", "llm_inference")]: asset.expansion.llmInference,
+        ...(asset.history ? { [fieldLabel("多轮历史", "history")]: translatedHistory(asset.history) } : {}),
       })));
     case "negative_cases.jsonl":
       return toJsonl(assetPackage.assets.negativeCases.map((asset) => ({
-        input: asset.instruction,
-        unsafe_output: asset.output,
-        expected_behavior: asset.expected,
-        tags: asset.tags,
+        [fieldLabel("资产编号", "id")]: asset.id,
+        [fieldLabel("资产类型", "asset_type")]: asset.assetType,
+        [fieldLabel("根因编号", "cluster_id")]: asset.clusterId,
+        [fieldLabel("来源Case", "source_case_id")]: asset.sourceCaseId,
+        [fieldLabel("输入", "input")]: asset.instruction,
+        [fieldLabel("风险输出", "unsafe_output")]: asset.output,
+        [fieldLabel("期望行为", "expected_behavior")]: asset.expected,
+        [fieldLabel("是否LLM推理", "llm_inference")]: asset.expansion.llmInference,
+        [fieldLabel("标签", "tags")]: asset.tags,
       })));
     case "quality_report.json":
-      return JSON.stringify(assetPackage.assets.qualityReport, null, 2);
+      return JSON.stringify(translatedQualityReport(assetPackage.assets.qualityReport), null, 2);
     case "provenance.json":
-      return JSON.stringify(assetPackage.assets.provenance, null, 2);
+      return JSON.stringify(translatedProvenance(assetPackage), null, 2);
     default:
       throw new Error(`未知资产文件：${fileName}`);
   }

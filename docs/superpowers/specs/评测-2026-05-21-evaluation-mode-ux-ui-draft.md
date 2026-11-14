@@ -20,9 +20,9 @@ docs/superpowers/prototypes/corpusflow-evaluation-ppt-shot.png
 
 关联文档：
 
-- `docs/superpowers/specs/2026-05-21-复赛评测模式需求与里程碑.md`
-- `docs/superpowers/specs/2026-05-21-corpusflow-big-narrative.md`
-- `docs/superpowers/specs/2026-05-21-evaluation-mode-prd.md`
+- `docs/superpowers/specs/评测-评测-评测-2026-05-21-复赛评测模式需求与里程碑.md`
+- `docs/superpowers/specs/说明-说明-说明-2026-05-21-corpusflow-big-narrative.md`
+- `docs/superpowers/specs/评测-评测-评测-2026-05-21-evaluation-mode-prd.md`
 
 ## 1. 设计判决
 

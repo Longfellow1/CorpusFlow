@@ -1,0 +1,277 @@
+{
+  "generated_at": "2026-05-25T00:00:00+08:00",
+  "source": {
+    "migration_package": "/Users/Harland/Go/data_analysis/migration_package",
+    "analysis_id": "analysis_20260427_204247",
+    "chat_report": "/Users/Harland/Go/Chat/CHAT-0410/eval/reports/mt_migration90_20260515_095956_e4a4c8"
+  },
+  "quality_gate": {
+    "rejected_total": 356,
+    "rejected_by_reason": {
+      "short_chinese_query": 133,
+      "weak_mapu_intent": 158,
+      "weak_music_intent": 23,
+      "low_information_fragment": 4,
+      "weak_app_intent": 17,
+      "weak_vehicle_control_intent": 6,
+      "duplicate_query_cap": 5,
+      "weak_negative_signal": 7,
+      "fixture_duplicate_query_cap": 3
+    },
+    "rejected_by_dimension": {
+      "migration_domain_error": 255,
+      "migration_weak_answer": 64,
+      "migration_negative_complaint": 20,
+      "migration_explicit_negative_emotion": 12,
+      "migration_multiturn_context": 3,
+      "chat_eval_execution_failure": 2
+    },
+    "rejected_samples": [
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "到这儿",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "到你停车那儿吗",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_music_intent",
+        "query": "听懂了吗看",
+        "target_agent": "musicX",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "不是调到最高的",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "到是打卡呀打卡了吗",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "导航来上一美",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "到哪里都认不得的啊",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "去still alive没女",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "导航哪里啊",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "low_information_fragment",
+        "query": "去的时候",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "到时",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "去吉亮",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "到了",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_music_intent",
+        "query": "熊天明唱歌可好听啊",
+        "target_agent": "musicX",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "到后庆这就是嗯",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "去哪",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "去我的了唉毕也强了",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "听懂",
+        "target_agent": "musicX",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "导航到王真真",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_music_intent",
+        "query": "播放了没有",
+        "target_agent": "musicX",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "打开siri",
+        "target_agent": "app",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "low_information_fragment",
+        "query": "到时候呢",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "short_chinese_query",
+        "query": "去tmd",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      },
+      {
+        "dimension": "migration_domain_error",
+        "reason": "weak_mapu_intent",
+        "query": "我要到了吴总",
+        "target_agent": "mapU",
+        "actual_agent": "chat"
+      }
+    ],
+    "policy": {
+      "all_fixture_user_input_min_chinese_chars": 4,
+      "mapu_requires_navigation_action_and_place_signal": true,
+      "duplicate_query_caps_by_dimension": {
+        "migration_domain_error": 1,
+        "migration_weak_answer": 1,
+        "migration_negative_complaint": 2,
+        "migration_explicit_negative_emotion": 2,
+        "migration_multiturn_context": 3,
+        "chat_eval_execution_failure": 3
+      }
+    }
+  },
+  "fixtures": {
+    "migration_badcase_dimensions.jsonl": {
+      "rows": 34,
+      "dimension_distribution": {
+        "migration_domain_error": 6,
+        "migration_weak_answer": 6,
+        "migration_negative_complaint": 6,
+        "migration_explicit_negative_emotion": 6,
+        "migration_multiturn_context": 4,
+        "chat_eval_execution_failure": 6
+      },
+      "all_source_ids_redacted": true,
+      "quality": {
+        "short_chinese_query_rows": 0,
+        "short_chinese_query_rows_by_dimension": {},
+        "duplicate_queries_over_cap": []
+      }
+    },
+    "migration_badcase_regression.jsonl": {
+      "rows": 170,
+      "dimension_distribution": {
+        "migration_domain_error": 24,
+        "migration_weak_answer": 61,
+        "migration_negative_complaint": 20,
+        "migration_explicit_negative_emotion": 20,
+        "migration_multiturn_context": 20,
+        "chat_eval_execution_failure": 25
+      },
+      "all_source_ids_redacted": true,
+      "quality": {
+        "short_chinese_query_rows": 0,
+        "short_chinese_query_rows_by_dimension": {},
+        "duplicate_queries_over_cap": []
+      }
+    },
+    "migration_badcase_full.jsonl": {
+      "rows": 535,
+      "dimension_distribution": {
+        "migration_domain_error": 24,
+        "migration_weak_answer": 210,
+        "migration_negative_complaint": 23,
+        "migration_explicit_negative_emotion": 38,
+        "migration_multiturn_context": 122,
+        "chat_eval_execution_failure": 118
+      },
+      "all_source_ids_redacted": true,
+      "quality": {
+        "short_chinese_query_rows": 0,
+        "short_chinese_query_rows_by_dimension": {},
+        "duplicate_queries_over_cap": []
+      }
+    },
+    "migration_multiturn_context.jsonl": {
+      "rows": 122,
+      "dimension_distribution": {
+        "migration_multiturn_context": 122
+      },
+      "all_source_ids_redacted": true,
+      "quality": {
+        "short_chinese_query_rows": 0,
+        "short_chinese_query_rows_by_dimension": {},
+        "duplicate_queries_over_cap": []
+      }
+    }
+  }
+}

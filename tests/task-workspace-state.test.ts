@@ -107,7 +107,7 @@ test("createGenerationSnapshot deep clones seeds so later edits do not leak into
 
 test("createEmptyQuickWorkspaceState and clearQuickWorkspaceResults keep clear scoped to the active task", () => {
   const initial = createEmptyQuickWorkspaceState();
-  assert.equal(initial.quickConcurrency, 4);
+  assert.equal(initial.quickConcurrency, 8);
   const populated = {
     ...initial,
     quickImportStatus: "ready" as const,

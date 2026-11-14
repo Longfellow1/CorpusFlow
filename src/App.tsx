@@ -611,6 +611,20 @@ function AppContent() {
     return false;
   }, [isLoggedIn]);
 
+  const resetFineTuneWorkspaceState = useCallback(() => {
+    setFineTuneMultiTurnEnabled(false);
+    setSeedInput("");
+    setSeeds([]);
+    setGeneratedData([]);
+    setOverallRequirement("");
+    setMultiTurnContext("");
+    setStyleAdjustment("");
+    setExpansionRatio(MIN_EXPANSION_RATIO);
+    setTemperature(0.78);
+    setGenerationRequest(null);
+    setFineTuneProgress({ stage: "idle", completed: 0, total: 0 });
+  }, []);
+
   const createWorkspaceTask = useCallback(async (workMode: "quick" | "advanced" | "evaluation") => {
     const nextMode = workMode === "quick" ? "quick" : "single";
     const taskName = workMode === "evaluation"
@@ -625,12 +639,12 @@ function AppContent() {
         businessType: workMode === "quick" ? "evaluation" : "training",
         workMode,
       });
-    setTasks((prev) => [newTask as Task, ...prev]);
+    setTasks((prev) => [newTask as Task, ...prev.map((task) => ({ ...task, active: false }))]);
     setActiveTask(newTask.id);
     setView(workMode === "evaluation" ? "evaluation" : workMode === "quick" ? "quick" : "fine-tune");
     setMode(nextMode);
     if (workMode === "advanced") {
-      setFineTuneMultiTurnEnabled(false);
+      resetFineTuneWorkspaceState();
     }
     setTaskDataMap((prev) => ({
       ...prev,
@@ -649,30 +663,17 @@ function AppContent() {
       }));
     }
     return newTask as Task;
-  }, []);
+  }, [resetFineTuneWorkspaceState]);
 
   const openFineTuneWorkspace = useCallback(async () => {
     if (!requireLoginForWorkspace()) return;
-    const activeTaskRecord = tasks.find((task) => task.id === activeTask);
-    const targetTask = activeTaskRecord && getTaskView(activeTaskRecord) === "fine-tune"
-      ? activeTaskRecord
-      : tasks.find((task) => getTaskView(task) === "fine-tune");
-    if (targetTask) {
-      setActiveTask(targetTask.id);
-    } else {
-      try {
-        await createWorkspaceTask("advanced");
-        return;
-      } catch (error) {
-        console.error("Create fine-tune task failed", error);
-        setApiError("创建精调任务失败");
-        return;
-      }
+    try {
+      await createWorkspaceTask("advanced");
+    } catch (error) {
+      console.error("Create fine-tune task failed", error);
+      setApiError("创建精调任务失败");
     }
-    setView('fine-tune');
-    setMode('single');
-    setFineTuneMultiTurnEnabled(false);
-  }, [activeTask, createWorkspaceTask, requireLoginForWorkspace, tasks]);
+  }, [createWorkspaceTask, requireLoginForWorkspace]);
 
   const openQuickWorkspace = useCallback(async () => {
     if (!requireLoginForWorkspace()) return;
@@ -851,11 +852,10 @@ function AppContent() {
 
     if (activeTask && taskDataMap[activeTask]) {
       const data = taskDataMap[activeTask];
-      setSeeds(data.seeds || []);
+      const nextSeeds = data.seeds || [];
+      setSeeds(nextSeeds);
       setGeneratedData(data.generated || []);
-      if (data.seeds && data.seeds.length > 0) {
-        setSeedInput(data.seeds.map(s => s.text).join("\n"));
-      }
+      setSeedInput(nextSeeds.length > 0 ? nextSeeds.map(s => s.text).join("\n") : "");
     } else if (activeTask) {
       // Initialize empty data for new task if not in map
       setSeeds([]);
@@ -896,9 +896,7 @@ function AppContent() {
         }));
         setSeeds(normalizedSeeds);
         setGeneratedData(nextGenerated as GeneratedItem[]);
-        if (normalizedSeeds.length > 0) {
-          setSeedInput(normalizedSeeds.map((s) => s.text).join("\n"));
-        }
+        setSeedInput(normalizedSeeds.length > 0 ? normalizedSeeds.map((s) => s.text).join("\n") : "");
         setIsTaskDataLoaded(true);
       } catch (error) {
         console.error("Failed to load task data", error);
@@ -1049,13 +1047,13 @@ function AppContent() {
           workMode,
         });
 
-      setTasks((prev) => [newTask as Task, ...prev]);
+      setTasks((prev) => [newTask as Task, ...prev.map((task) => ({ ...task, active: false }))]);
       setNewTaskName("");
       setActiveTask(newTask.id);
       setView(workMode === "evaluation" ? "evaluation" : workMode === "quick" ? "quick" : "fine-tune");
       setMode(workMode === "quick" ? "quick" : "single");
       if (workMode === "advanced") {
-        setFineTuneMultiTurnEnabled(false);
+        resetFineTuneWorkspaceState();
       }
       setTaskDataMap((prev) => ({
         ...prev,
@@ -1537,6 +1535,7 @@ function AppContent() {
     } catch (error) {
       console.error("Update evaluation strategy failed", error);
       setEvaluationError(error instanceof Error ? error.message : "生产策略更新失败");
+      throw error;
     } finally {
       setEvaluationStatus("idle");
     }
@@ -1555,6 +1554,7 @@ function AppContent() {
     } catch (error) {
       console.error("Preview evaluation assets failed", error);
       setEvaluationError(error instanceof Error ? error.message : "资产预览生成失败");
+      throw error;
     } finally {
       setEvaluationStatus("idle");
     }
@@ -1573,6 +1573,7 @@ function AppContent() {
     } catch (error) {
       console.error("Generate evaluation package failed", error);
       setEvaluationError(error instanceof Error ? error.message : "资产包生成失败");
+      throw error;
     } finally {
       setEvaluationStatus("idle");
     }

@@ -130,11 +130,23 @@ Copy `.env.example` to `.env.local`:
 ```bash
 PORT=3000
 ALGORITHM_BASE_URL=http://127.0.0.1:8001
+STORAGE_BACKEND=auto
+DATABASE_URL=
+DATABASE_SSL_MODE=auto
+DATABASE_POOL_MAX=5
+JWT_SECRET=change-me
+CORS_ALLOWED_ORIGINS=
 
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_API_KEY=your_key_here
 ARK_MODEL=doubao-seed-1-6-250615
 ARK_TIMEOUT_SECONDS=120
+GENERATE_CONCURRENCY=8
+MAX_GENERATE_CONCURRENCY=16
+QUICK_GENERATE_DEFAULT_CONCURRENCY=8
+QUICK_GENERATE_MAX_CONCURRENCY=16
+EVALUATION_ASSET_CONCURRENCY=4
+EVALUATION_LLM_ENABLED=false
 
 VITE_API_BASE_URL=
 ```
@@ -142,6 +154,9 @@ VITE_API_BASE_URL=
 Notes:
 
 - `ARK_API_KEY` belongs on the backend only. Do not put it in frontend builds or public materials.
+- Algorithm services default to seed-level concurrency 8. Tune `GENERATE_CONCURRENCY` and `QUICK_GENERATE_DEFAULT_CONCURRENCY`; keep free Render services around 8-12 and use 16 on stronger instances.
+- Evaluation mode now calls FastAPI `/evaluation/analyze` and `/evaluation/assets`. With `EVALUATION_LLM_ENABLED=false`, it uses the rule Normalizer / Clusterer / Asset Generator; set it to `true` to enable LLM labeling and asset generation, with rule fallback on failure.
+- `EVALUATION_ASSET_CONCURRENCY` controls per-cluster evaluation asset generation. Keep free Render services around 2-4 and raise it on stronger instances.
 - `VITE_API_BASE_URL` points the frontend to the API domain. It can stay empty for same-origin local development.
 - For Cloudflare Pages, set `VITE_API_BASE_URL` to the public API URL.
 
@@ -161,8 +176,13 @@ Tests:
 
 ```bash
 node --import tsx --test tests/*.test.ts
+npm run eval:evaluation-agent
+npm run eval:evaluation-agent -- --tier=full
+npm run eval:signal-audit
 cd algorithm && uv run python -m unittest tests.test_generation_frame
 ```
+
+`npm run eval:evaluation-agent` runs the smoke tier by default; `-- --tier=full` loads the 663-row full fixture in `fixtures/evaluation/migration_badcase_full.jsonl`. `npm run eval:signal-audit` compares old/new signal rules for recall, unknown rate, and `tool_not_called` / `safety_boundary` false positives.
 
 Health check:
 
